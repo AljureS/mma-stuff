@@ -66,7 +66,62 @@ Las odds de casas de apuestas **NO afectan la predicción del modelo**. Se recop
 2. **Calcula las 16 features** (variables de entrada del modelo)
 3. **Genera puntuaciones compuestas** usando algoritmos específicos
 4. **Usa Machine Learning** (XGBoost) para predecir el resultado
-5. **Genera análisis** usando IA para explicar la predicción
+5. **Genera análisis** usando LLM (Claude/Ollama) para explicar la predicción
+
+### 2.5. **Sistema LLM con Fallback** (`api/llm_client.py`) - NUEVO
+**¿Qué hace?** Gestiona el análisis cualitativo de peleas con alta disponibilidad.
+
+**Arquitectura LLM:**
+```
+┌─────────────────┐
+│   FastAPI App   │
+└────────┬────────┘
+         │
+    ┌────▼────┐
+    │LLMClient│ (Orquestador)
+    └────┬────┘
+         │
+    ┌────▼────────────────────┐
+    │                         │
+┌───▼───────┐      ┌──────────▼────┐
+│Claude API │      │ Ollama Local  │
+│Sonnet 4.5 │ (1°) │ Qwen2.5:7b    │ (Fallback)
+└───────────┘      └───────────────┘
+```
+
+**Flujo de decisión:**
+1. **Intento primario**: Claude Sonnet 4.5 via API Anthropic
+   - Si éxito: retornar respuesta Claude
+   - Si `RateLimitError` o `APITimeoutError`: → fallback inmediato a Ollama
+   - Si `APIError`: → reintentar hasta 3 veces con backoff exponencial (1s, 2s, 4s)
+   - Si falla después de reintentos: → fallback a Ollama
+
+2. **Fallback Ollama**: Qwen2.5:7b local
+   - Reintentar hasta 3 veces si falla
+   - Si falla: retornar mensaje de error genérico
+
+3. **Circuit Breaker**:
+   - Claude: Abre después de 5 fallas consecutivas (timeout 60s)
+   - Ollama: Abre después de 3 fallas consecutivas (timeout 30s)
+   - Estado half-open después de timeout permite test de recuperación
+
+**Características:**
+- **Reintentos exponenciales**: 1s → 2s → 4s entre intentos
+- **Fallback automático**: Sin intervención manual
+- **Circuit breaker**: Protege servicios de sobrecarga
+- **Logging detallado**: Proveedor usado, latencia, tokens, fallback status
+- **Health checks**: Endpoint `/health/llm` para monitoreo
+
+**Variables de entorno requeridas:**
+```bash
+ANTHROPIC_API_KEY=sk-ant-...        # API key de Anthropic
+ANTHROPIC_ENDPOINT=                 # Opcional, custom endpoint
+CLAUDE_MODEL=claude-sonnet-4-5-20250514
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b
+LLM_MAX_RETRIES=3
+LLM_TIMEOUT=30
+```
 
 **Las 16 Variables (Features) del Modelo ML:**
 
@@ -167,7 +222,11 @@ Las odds de casas de apuestas **NO afectan la predicción del modelo**. Se recop
 4. Sistema carga datos completos de ambos peleadores
 5. Motor de predicción calcula las **16 features** del modelo
 6. Modelo XGBoost genera probabilidades de victoria
-7. IA genera análisis cualitativo (opcional)
+7. **Sistema LLM genera análisis cualitativo** (si `include_llm_analysis=true`):
+   - **Intento 1**: Claude Sonnet 4.5 via API Anthropic
+   - **Fallback automático**: Ollama (Qwen2.5:7b) si Claude falla por rate limit, timeout o errores persistentes
+   - **Circuit breaker**: Previene sobrecarga de servicios
+   - **Logging**: Registra proveedor usado, latencia, tokens consumidos
 8. **DESPUÉS de la predicción**: Sistema obtiene odds de apuestas para comparación
 9. Resultado se guarda en cache Redis por 1 hora
 
@@ -190,6 +249,8 @@ Las odds de casas de apuestas **NO afectan la predicción del modelo**. Se recop
 - **Redis**: Cache en memoria
 - **Requests + BeautifulSoup**: Web scraping
 - **Pydantic**: Validación de datos
+- **Anthropic SDK**: Integración Claude API
+- **aiohttp**: Cliente HTTP asíncrono para Ollama
 
 ### Frontend
 - **HTML5/CSS3**: Estructura base
@@ -201,6 +262,7 @@ Las odds de casas de apuestas **NO afectan la predicción del modelo**. Se recop
 ### Infraestructura
 - **PostgreSQL**: Base de datos principal
 - **Redis**: Cache y sesiones
+- **Ollama**: Servidor local para Qwen2.5:7b (fallback LLM)
 - **Nginx**: Servidor web reverso
 - **Docker**: Contenedorización
 - **Supervisor**: Gestión de procesos
@@ -210,8 +272,10 @@ Las odds de casas de apuestas **NO afectan la predicción del modelo**. Se recop
 ### Archivos Principales
 - `api/main.py`: Servidor FastAPI con todos los endpoints
 - `api/ml_system.py`: Motor de predicción con ML y las 16 features
+- `api/llm_client.py`: **Sistema LLM con fallback Claude → Ollama (NUEVO)**
 - `scripts/data_collection.py`: Sistema de recolección de datos (web scraping)
 - `frontend/mma_frontend.html`: Interfaz web completa
+- `tests/test_llm_client.py`: **Tests unitarios para LLM client (NUEVO)**
 - `CLAUDE.md`: Documentación completa del proyecto (este archivo)
 
 ### Estructura de Datos
@@ -230,15 +294,29 @@ models/
 ### Opción 1: Desarrollo Local
 ```bash
 # 1. Instalar dependencias
-pip install fastapi uvicorn pandas numpy xgboost scikit-learn redis
+cd api
+pip install -r requirements.txt
 
-# 2. Iniciar Redis
+# 2. Configurar variables de entorno
+cp .env.example .env
+# Editar .env y agregar tu ANTHROPIC_API_KEY
+
+# 3. Iniciar servicios necesarios
+# Redis (cache)
 redis-server
 
-# 3. Ejecutar API
-python mma_prediction_api.py
+# Ollama (LLM fallback) - opcional
+ollama serve
+ollama pull qwen2.5:7b
 
-# 4. Abrir frontend
+# 4. Ejecutar API
+cd api
+python main.py
+
+# 5. Verificar salud del sistema
+curl http://localhost:8000/health/llm
+
+# 6. Abrir frontend
 # Servir mma_frontend.html en un servidor web local
 ```
 

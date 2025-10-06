@@ -11,6 +11,12 @@ import asyncio
 import aiohttp
 import redis
 import json
+from dotenv import load_dotenv
+
+from llm_client import get_llm_client, LLMProvider
+
+# Load environment variables
+load_dotenv()
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +43,7 @@ redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=T
 # Modelos globales (cargar al inicio)
 prediction_model = None
 fighter_database = None
+llm_client = None
 
 class FightPredictionRequest(BaseModel):
     fighter_a: str
@@ -73,18 +80,21 @@ class UpcomingEvent(BaseModel):
 @app.on_event("startup")
 async def load_models():
     """Cargar modelos y datos al iniciar la aplicación"""
-    global prediction_model, fighter_database
-    
+    global prediction_model, fighter_database, llm_client
+
     try:
         # Cargar modelo entrenado
         with open('models/mma_prediction_model.pkl', 'rb') as f:
             prediction_model = pickle.load(f)
-        
+
         # Cargar base de datos de luchadores
         fighter_database = pd.read_csv('data/fighters_complete.csv')
-        
+
+        # Inicializar LLM client
+        llm_client = get_llm_client()
+
         logger.info("Models and data loaded successfully")
-        
+
     except Exception as e:
         logger.error(f"Error loading models: {e}")
         # En producción: cargar modelos por defecto o desde S3/cloud storage
@@ -317,7 +327,7 @@ async def get_model_performance():
 @app.get("/analytics/betting-roi", tags=["Analytics"])
 async def get_betting_roi():
     """ROI si siguieras las predicciones del modelo"""
-    
+
     return {
         "total_bets": 234,
         "winning_bets": 162,
@@ -328,6 +338,21 @@ async def get_betting_roi():
         "roi": 0.229,  # 22.9%
         "best_streak": 12,
         "worst_streak": -5
+    }
+
+@app.get("/health/llm", tags=["Health"])
+async def llm_health_check():
+    """Verificar estado de los proveedores LLM"""
+
+    if llm_client is None:
+        raise HTTPException(status_code=503, detail="LLM client not initialized")
+
+    health_status = await llm_client.health_check()
+
+    return {
+        "status": "healthy" if health_status else "degraded",
+        "providers": health_status,
+        "timestamp": datetime.now().isoformat()
     }
 
 # Funciones auxiliares
@@ -391,35 +416,54 @@ def engineer_fight_features(fighter_a_data: Dict, fighter_b_data: Dict, request:
     return features[:16]
 
 async def generate_llm_analysis(fighter_a_data: Dict, fighter_b_data: Dict, probabilities: np.ndarray) -> str:
-    """Generar análisis usando LLM"""
-    
+    """Generar análisis usando LLM con fallback Claude -> Ollama"""
+
     try:
-        # En producción: llamada real a gpt-oss o OpenAI API
-        prompt = f"""
-        Analiza esta pelea de MMA:
-        
-        {fighter_a_data['name']}: {fighter_a_data.get('wins', 0)}-{fighter_a_data.get('losses', 0)}
-        {fighter_b_data['name']}: {fighter_b_data.get('wins', 0)}-{fighter_b_data.get('losses', 0)}
-        
-        Predicción ML: {probabilities[1]:.1%} - {probabilities[0]:.1%}
-        
-        Proporciona un análisis conciso de 2-3 párrafos.
-        """
-        
-        # Placeholder - reemplazar con llamada real a LLM
-        analysis = f"""
-        Esta pelea presenta un interesante contraste de estilos entre {fighter_a_data['name']} y {fighter_b_data['name']}. 
-        Basándose en las estadísticas, el modelo predice una probabilidad de {probabilities[1]:.1%} para {fighter_a_data['name']}.
-        
-        Los factores clave incluyen la diferencia en experiencia y el matchup estilístico. 
-        La preparación específica y la condición física el día de la pelea serán determinantes.
-        """
-        
-        return analysis
-        
+        # Construir prompt detallado
+        prompt = f"""Analiza esta pelea de MMA basándote en los datos y predicción del modelo ML:
+
+**{fighter_a_data['name']}**
+- Record: {fighter_a_data.get('wins', 0)}-{fighter_a_data.get('losses', 0)}-{fighter_a_data.get('draws', 0)}
+- Altura: {fighter_a_data.get('height', 'N/A')}cm, Alcance: {fighter_a_data.get('reach', 'N/A')}cm
+- Edad: {fighter_a_data.get('age', 'N/A')} años
+
+**{fighter_b_data['name']}**
+- Record: {fighter_b_data.get('wins', 0)}-{fighter_b_data.get('losses', 0)}-{fighter_b_data.get('draws', 0)}
+- Altura: {fighter_b_data.get('height', 'N/A')}cm, Alcance: {fighter_b_data.get('reach', 'N/A')}cm
+- Edad: {fighter_b_data.get('age', 'N/A')} años
+
+**Predicción del modelo ML:** {probabilities[1]:.1%} para {fighter_a_data['name']} vs {probabilities[0]:.1%} para {fighter_b_data['name']}
+
+Proporciona un análisis de 2-3 párrafos que incluya:
+1. Ventajas/desventajas clave de cada peleador
+2. Factores críticos del matchup (físicos, técnicos, estilos)
+3. Escenarios de victoria más probables
+4. Tu evaluación de la predicción del modelo
+
+Sé específico y técnico usando tu conocimiento de MMA."""
+
+        system_prompt = "Eres un analista experto en MMA con profundo conocimiento técnico de striking, grappling, y estrategias de combate."
+
+        # Usar LLM client con fallback automático
+        response = await llm_client.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            max_tokens=800,
+            temperature=0.7
+        )
+
+        # Log metadata
+        logger.info(
+            f"LLM analysis generated using {response.provider.value} "
+            f"({response.model}) in {response.latency_ms}ms "
+            f"(fallback: {response.fallback_used})"
+        )
+
+        return response.content
+
     except Exception as e:
-        logger.error(f"Error generating LLM analysis: {e}")
-        return "Análisis LLM no disponible temporalmente."
+        logger.error(f"Error generating LLM analysis: {e}", exc_info=True)
+        return "Análisis LLM no disponible temporalmente debido a un error técnico."
 
 async def get_betting_insights(fighter_a: str, fighter_b: str) -> Optional[Dict]:
     """Obtener insights de apuestas"""
