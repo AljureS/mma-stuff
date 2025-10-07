@@ -1,11 +1,13 @@
-# Sistema LLM con Fallback - Guía Completa
+# Sistema LLM con Fallback - Guía de Uso Local
 
 ## 📋 Descripción
 
-El sistema LLM del MMA Fight Predictor utiliza una arquitectura de **fallback automático** que garantiza alta disponibilidad y calidad en el análisis de peleas:
+Sistema LLM para uso personal que usa:
 
 1. **Proveedor primario**: Claude Sonnet 4.5 (Anthropic API)
 2. **Fallback automático**: Ollama con Qwen2.5:7b (local)
+
+**Nota**: Esta guía está enfocada en **ejecución local** para uso personal.
 
 ## 🏗️ Arquitectura
 
@@ -40,122 +42,96 @@ El sistema LLM del MMA Fight Predictor utiliza una arquitectura de **fallback au
 └─────────────┘       └──────────────────┘
 ```
 
-## ⚙️ Setup
+## ⚙️ Setup Local (Uso Personal)
 
-### 1. Instalar dependencias
+### 1. Instalar dependencias Python
 
 ```bash
-cd api
+cd /home/saidsimon2/mma-predictor/api
 pip install -r requirements.txt
 ```
 
-### 2. Configurar variables de entorno
+### 2. Configurar API Key de Anthropic
 
-Edita `api/.env` y agrega:
+Tu archivo `.env` ya tiene tu API key configurada. Si necesitas cambiarla:
 
 ```bash
-# === LLM Configuration ===
-ANTHROPIC_API_KEY=sk-ant-api03-xxxxx  # Tu API key de Anthropic
-ANTHROPIC_ENDPOINT=                    # Opcional, custom endpoint
-CLAUDE_MODEL=claude-sonnet-4-5-20250514
+nano /home/saidsimon2/mma-predictor/api/.env
+```
+
+Verifica que tenga:
+```bash
+ANTHROPIC_API_KEY=sk-ant-api03-...  # Tu key actual
 OLLAMA_URL=http://localhost:11434
+CLAUDE_MODEL=claude-sonnet-4-5-20250514
 OLLAMA_MODEL=qwen2.5:7b
-LLM_MAX_RETRIES=3
-LLM_TIMEOUT=30
 ```
 
-### 3. Obtener API Key de Anthropic
+### 3. Verificar Ollama (ya instalado)
 
-1. Visita https://console.anthropic.com/
-2. Crear cuenta o login
-3. Ir a "API Keys" → "Create Key"
-4. Copiar la key (empieza con `sk-ant-...`)
-5. Pegarla en `.env`
+Ya tienes Ollama y Qwen2.5:7b instalados. Solo verifica:
 
-**Costo esperado**: ~$0.01 por análisis (entrada ~300 tokens + salida ~500 tokens)
-
-### 4. Instalar y configurar Ollama (Fallback)
-
-#### Linux / WSL:
 ```bash
-# Instalar Ollama
-curl -fsSL https://ollama.com/install.sh | sh
+# Verificar que tienes el modelo
+ollama list | grep qwen
 
-# Iniciar servidor
+# Debería mostrar: qwen2.5:7b
+```
+
+### 4. Iniciar servicios locales
+
+**Terminal 1 - Redis:**
+```bash
+redis-server
+```
+
+**Terminal 2 - Ollama:**
+```bash
 ollama serve
-
-# En otra terminal, descargar modelo
-ollama pull qwen2.5:7b
 ```
 
-#### macOS:
-```bash
-# Descargar desde https://ollama.com/download
-# O usar brew
-brew install ollama
-
-ollama serve
-ollama pull qwen2.5:7b
-```
-
-#### Verificar instalación:
-```bash
-curl http://localhost:11434/api/tags
-```
-
-Deberías ver `qwen2.5:7b` en la lista.
-
-### 5. Ejecutar tests
+**Terminal 3 - API:**
 
 ```bash
-# Tests unitarios con mocks
-pytest tests/test_llm_client.py -v
-
-# Test específico
-pytest tests/test_llm_client.py::test_claude_success -v
-
-# Test con cobertura
-pytest tests/test_llm_client.py --cov=api.llm_client --cov-report=term
-```
-
-### 6. Iniciar API
-
-```bash
-cd api
+cd /home/saidsimon2/mma-predictor/api
 python main.py
 ```
 
-Verás en los logs:
+Verás:
 ```
 INFO: Models and data loaded successfully
 INFO: Claude client initialized with model claude-sonnet-4-5-20250514
+INFO: Uvicorn running on http://0.0.0.0:8000
 ```
 
-### 7. Verificar salud del sistema LLM
+### 5. Verificar que todo funciona
+
+**Desde otra terminal:**
 
 ```bash
+# Health check general
+curl http://localhost:8000/
+
+# Health check LLM
 curl http://localhost:8000/health/llm | jq
 ```
 
-**Respuesta esperada:**
+**Deberías ver:**
 ```json
 {
   "status": "healthy",
   "providers": {
-    "claude": {
-      "available": true,
-      "circuit_breaker": "closed",
-      "failures": 0
-    },
-    "ollama": {
-      "available": true,
-      "circuit_breaker": "closed",
-      "failures": 0,
-      "reachable": true
-    }
-  },
-  "timestamp": "2025-10-06T16:45:00.123456"
+    "claude": {"available": true, "circuit_breaker": "closed"},
+    "ollama": {"available": true, "reachable": true}
+  }
 }
+```
+
+### 6. (Opcional) Ejecutar tests
+
+```bash
+cd /home/saidsimon2/mma-predictor
+pytest tests/test_llm_client.py -v
 ```
 
 ## 🚀 Uso
@@ -350,84 +326,50 @@ ollama list | grep qwen
 systemctl restart mma-api
 ```
 
-## 📈 Optimizaciones
+## 📈 Optimizaciones para Uso Personal
 
-### Reducir costos de Claude
+### Reducir costos de Claude (~$1-3/mes actual)
 
-1. **Usar Haiku para análisis simples**:
-```python
+1. **Usar Haiku si haces muchos análisis**:
+```bash
+# En .env
 CLAUDE_MODEL=claude-3-5-haiku-20241022  # ~10x más barato
 ```
 
-2. **Reducir max_tokens**:
-```python
-max_tokens=400  # Default: 800
-```
-
-3. **Cache agresivo en Redis**:
-```python
-redis_client.setex(cache_key, 86400, response.json())  # 24 horas
-```
-
-### Mejorar latencia
-
-1. **Priorizar Ollama para análisis rápidos**:
-```python
-force_provider=LLMProvider.OLLAMA
-```
-
-2. **Paralelizar requests** (si múltiples peleas):
-```python
-import asyncio
-tasks = [llm.generate(prompt) for prompt in prompts]
-responses = await asyncio.gather(*tasks)
-```
-
-3. **GPU para Ollama** (acelera 5-10x):
+2. **Usar Ollama por defecto** (gratis):
 ```bash
-# Verificar GPU disponible
-nvidia-smi
-
-# Ollama usa GPU automáticamente si está disponible
+# En .env, comenta la API key para forzar Ollama
+# ANTHROPIC_API_KEY=...
 ```
 
-## 🧪 Tests
+### Mejorar velocidad
 
-### Estructura de tests
-
-```
-tests/
-└── test_llm_client.py
-    ├── Circuit Breaker Tests (5 tests)
-    ├── Claude Tests (4 tests)
-    ├── Ollama Tests (2 tests)
-    ├── Fallback Tests (2 tests)
-    ├── Health Check Tests (2 tests)
-    └── Integration Tests (2 tests)
+1. **Ollama con GPU** (si tienes NVIDIA):
+```bash
+nvidia-smi  # Verificar GPU
+# Ollama detecta y usa GPU automáticamente
 ```
 
-### Ejecutar suite completa
+2. **Cache en Redis más largo**:
+```bash
+# Análisis se cachean 1 hora por defecto
+# Puedes aumentar en api/main.py línea 160:
+redis_client.setex(cache_key, 86400, ...)  # 24 horas
+```
+
+## 🧪 Tests (Opcional)
+
+Si quieres verificar que todo funciona correctamente:
 
 ```bash
-# Todos los tests
+cd /home/saidsimon2/mma-predictor
+
+# Todos los tests (con mocks, no usa API real)
 pytest tests/test_llm_client.py -v
 
-# Solo tests de Claude
-pytest tests/test_llm_client.py -k "claude" -v
-
-# Solo tests de fallback
-pytest tests/test_llm_client.py -k "fallback" -v
-
-# Con reporte de cobertura
-pytest tests/test_llm_client.py --cov=api.llm_client --cov-report=html
-open htmlcov/index.html
-```
-
-### Tests de integración (requiere servicios)
-
-```bash
-# Requiere: Claude API key válida + Ollama running
-pytest tests/integration/ -v --integration
+# Tests específicos
+pytest tests/test_llm_client.py::test_claude_success -v
+pytest tests/test_llm_client.py::test_ollama_success -v
 ```
 
 ## 📚 Ejemplos Completos
@@ -533,42 +475,46 @@ async def robust_analysis(fighter_a, fighter_b):
 asyncio.run(robust_analysis("Jon Jones", "Stipe Miocic"))
 ```
 
-## 🔐 Seguridad
+## 🔐 Seguridad (Uso Personal)
 
-### Variables de entorno
+### Proteger tu API Key
 
-**NUNCA** commitear `.env` al repositorio:
-
-```bash
-# .gitignore
-api/.env
-.env
-*.env
-```
-
-### API Keys en producción
-
-Usar secretos de entorno del proveedor de hosting:
+Tu `.env` ya está en `.gitignore`, pero por si acaso:
 
 ```bash
-# Heroku
-heroku config:set ANTHROPIC_API_KEY=sk-ant-...
+# Verificar que .env NO se suba a git
+cat .gitignore | grep .env
 
-# Docker
-docker run -e ANTHROPIC_API_KEY=sk-ant-... mma-api
-
-# Kubernetes
-kubectl create secret generic llm-secrets \
-  --from-literal=anthropic-key=sk-ant-...
+# Debería mostrar:
+# api/.env
+# .env
 ```
 
-## 📞 Soporte
+**Importante**: Si compartes el proyecto, NO compartas tu `.env` con la API key.
+
+## 🚀 Inicio Rápido (Resumen)
+
+```bash
+# Terminal 1
+redis-server
+
+# Terminal 2
+ollama serve
+
+# Terminal 3
+cd /home/saidsimon2/mma-predictor/api
+python main.py
+
+# Terminal 4 (verificar)
+curl http://localhost:8000/health/llm | jq
+```
+
+## 📞 Referencias
 
 - **Documentación Anthropic**: https://docs.anthropic.com/
 - **Documentación Ollama**: https://github.com/ollama/ollama
-- **Issues del proyecto**: https://github.com/tu-usuario/mma-predictor/issues
 
 ---
 
 **Última actualización**: 2025-10-06
-**Versión**: 1.0.0
+**Versión**: 1.0.0 (Uso Personal)

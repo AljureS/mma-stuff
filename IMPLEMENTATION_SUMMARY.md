@@ -273,41 +273,45 @@ Resumen ejecutivo de la implementación.
 
 ---
 
-## 📋 Comandos Rápidos
+## 📋 Comandos Rápidos (Uso Personal Local)
 
 ### Setup
 ```bash
-cd api
+# Ya tienes Ollama y Qwen instalados, solo necesitas:
+cd /home/saidsimon2/mma-predictor/api
 pip install -r requirements.txt
-cp .env.example .env
-# Editar .env con tu ANTHROPIC_API_KEY
-redis-server &
-ollama serve &
-ollama pull qwen2.5:7b
+
+# Tu .env ya está configurado, verificar:
+cat .env | grep ANTHROPIC_API_KEY
+```
+
+### Iniciar servicios (3 terminales)
+```bash
+# Terminal 1
+redis-server
+
+# Terminal 2
+ollama serve
+
+# Terminal 3
+cd /home/saidsimon2/mma-predictor/api
 python main.py
 ```
 
-### Testing
+### Verificar (Terminal 4)
 ```bash
-# Tests unitarios
-pytest tests/test_llm_client.py -v
-
 # Health check
 curl http://localhost:8000/health/llm | jq
 
-# Test de predicción
+# Test de predicción (si tienes datos)
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -d '{"fighter_a":"Jon Jones","fighter_b":"Stipe Miocic","include_llm_analysis":true}' \
   | jq '.llm_analysis'
-```
 
-### Deployment (Docker)
-```bash
-docker build -t mma-predictor .
-docker run -d -p 8000:8000 \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
-  mma-predictor
+# Tests unitarios (opcional)
+cd /home/saidsimon2/mma-predictor
+pytest tests/test_llm_client.py -v
 ```
 
 ---
@@ -327,4 +331,4 @@ Se ha implementado un **sistema LLM de producción** con:
 
 **Implementado por**: Claude Sonnet 4.5
 **Fecha**: 2025-10-06
-**Versión**: 1.0.0
+**Versión**: 1.0.0 (Uso Personal Local)

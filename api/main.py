@@ -12,6 +12,7 @@ import aiohttp
 import redis
 import json
 from dotenv import load_dotenv
+from pathlib import Path
 
 from llm_client import get_llm_client, LLMProvider
 
@@ -83,12 +84,17 @@ async def load_models():
     global prediction_model, fighter_database, llm_client
 
     try:
+        # Get base path (project root directory)
+        base_path = Path(__file__).parent.parent
+
         # Cargar modelo entrenado
-        with open('models/mma_prediction_model.pkl', 'rb') as f:
+        model_path = base_path / 'models' / 'mma_prediction_model.pkl'
+        with open(model_path, 'rb') as f:
             prediction_model = pickle.load(f)
 
         # Cargar base de datos de luchadores
-        fighter_database = pd.read_csv('data/fighters_complete.csv')
+        csv_path = base_path / 'data' / 'fighters_complete.csv'
+        fighter_database = pd.read_csv(csv_path)
 
         # Inicializar LLM client
         llm_client = get_llm_client()

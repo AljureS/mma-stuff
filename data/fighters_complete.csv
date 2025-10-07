@@ -1,0 +1,21 @@
+name,wins,losses,draws,height,reach,age,weight_class,ranking,striking_accuracy,striking_defense,takedown_accuracy,takedown_defense
+Jon Jones,27,1,0,193,215,37,heavyweight,1,52.6,62.3,43.8,95.1
+Stipe Miocic,20,4,0,193,203,42,heavyweight,2,51.2,57.8,41.7,71.4
+Alexander Volkanovski,26,3,0,168,183,36,featherweight,1,48.9,56.1,45.2,82.6
+Ilia Topuria,15,0,0,170,178,28,featherweight,2,54.3,61.2,48.5,78.3
+Islam Makhachev,25,1,0,178,189,33,lightweight,1,49.2,58.9,53.2,85.2
+Charles Oliveira,34,10,0,178,188,35,lightweight,2,47.8,54.2,38.9,76.8
+Leon Edwards,22,3,0,185,190,33,welterweight,1,48.1,59.3,40.1,81.3
+Colby Covington,17,3,0,180,183,37,welterweight,3,44.2,56.7,46.8,79.5
+Israel Adesanya,24,3,0,193,203,35,middleweight,2,51.3,57.2,35.2,82.1
+Sean Strickland,28,3,0,185,191,34,middleweight,1,49.7,60.1,38.7,77.9
+Alex Pereira,10,2,0,193,203,37,light-heavyweight,2,53.1,58.5,36.4,75.2
+Robert Whittaker,26,7,0,183,185,34,middleweight,3,50.8,59.8,42.1,78.6
+Kamaru Usman,20,3,1,183,193,37,welterweight,4,50.2,60.5,45.9,82.7
+Belal Muhammad,23,3,0,180,183,36,welterweight,5,47.9,57.3,49.2,80.4
+Shavkat Rakhmonov,18,0,0,183,190,30,welterweight,6,52.1,61.8,50.3,83.9
+Gilbert Burns,22,5,1,178,180,38,welterweight,7,46.5,55.9,44.7,77.1
+Max Holloway,26,7,3,180,190,33,featherweight,3,48.3,56.8,42.8,79.8
+Brian Ortega,16,3,0,175,185,34,featherweight,4,45.6,54.1,47.3,74.2
+Yair Rodriguez,16,4,1,180,189,32,featherweight,5,49.8,58.7,43.9,76.5
+Arnold Allen,23,2,1,180,183,31,featherweight,6,47.2,59.4,41.2,81.8
