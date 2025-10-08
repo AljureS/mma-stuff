@@ -13,6 +13,10 @@ import redis
 import json
 from dotenv import load_dotenv
 from pathlib import Path
+import sys
+
+# Add scripts directory to path for data_collection
+sys.path.append(str(Path(__file__).parent.parent / 'scripts'))
 
 from llm_client import get_llm_client, LLMProvider
 
@@ -133,13 +137,25 @@ async def predict_fight(request: FightPredictionRequest):
             return FightPredictionResponse(**json.loads(cached_result))
         
         # Validar que los luchadores existen
+        logger.info(f"Searching for fighter_a: '{request.fighter_a}'")
         fighter_a_data = get_fighter_data(request.fighter_a)
+
+        logger.info(f"Searching for fighter_b: '{request.fighter_b}'")
         fighter_b_data = get_fighter_data(request.fighter_b)
-        
-        if not fighter_a_data or not fighter_b_data:
+
+        # Validación detallada
+        missing_fighters = []
+        if not fighter_a_data:
+            missing_fighters.append(request.fighter_a)
+            logger.warning(f"Fighter not found in database: '{request.fighter_a}'")
+        if not fighter_b_data:
+            missing_fighters.append(request.fighter_b)
+            logger.warning(f"Fighter not found in database: '{request.fighter_b}'")
+
+        if missing_fighters:
             raise HTTPException(
-                status_code=404, 
-                detail=f"Fighter(s) not found: {request.fighter_a}, {request.fighter_b}"
+                status_code=404,
+                detail=f"Fighter(s) not found in database: {', '.join(missing_fighters)}. Please check spelling or add fighter to database."
             )
         
         # Engineer features
@@ -178,8 +194,11 @@ async def predict_fight(request: FightPredictionRequest):
         logger.info(f"Generated prediction for {request.fighter_a} vs {request.fighter_b}")
         return response
         
+    except HTTPException:
+        # Re-raise HTTP exceptions (404, etc.) sin modificar
+        raise
     except Exception as e:
-        logger.error(f"Error making prediction: {e}")
+        logger.error(f"Error making prediction: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error making prediction: {str(e)}")
 
 @app.get("/fighter/{fighter_name}", response_model=FighterStatsResponse, tags=["Fighters"])
@@ -364,61 +383,210 @@ async def llm_health_check():
 # Funciones auxiliares
 
 def get_fighter_data(fighter_name: str) -> Optional[Dict]:
-    """Obtener datos de un luchador de la base de datos"""
+    """Obtener datos de un luchador con scraping automático y cache inteligente (7 días)"""
+    global fighter_database
+
     if fighter_database is None:
         return None
-    
+
+    # 1. Buscar en CSV (cache local)
+    fighter = _search_in_database(fighter_name)
+
+    # 2. Verificar frescura de datos (< 7 días)
+    if fighter and _is_data_fresh(fighter, days=7):
+        logger.info(f"Using cached data for '{fighter_name}' (fresh)")
+        return fighter
+
+    # 3. Si no existe O está desactualizado, scrapear
+    if not fighter or not _is_data_fresh(fighter, days=7):
+        action = "not found" if not fighter else "stale (>7 days)"
+        logger.info(f"Fighter '{fighter_name}' {action}, attempting web scraping...")
+
+        try:
+            from data_collection import MMADataCollector
+
+            collector = MMADataCollector()
+            fresh_data = collector.search_and_scrape_fighter(fighter_name)
+
+            if fresh_data:
+                logger.info(f"Successfully scraped data for '{fighter_name}'")
+                # 4. Actualizar/agregar al CSV
+                _update_or_add_to_csv(fresh_data)
+                # 5. Recargar fighter_database en memoria
+                _reload_fighter_database()
+                # 6. Retornar datos frescos
+                return _search_in_database(fighter_name)
+            else:
+                logger.warning(f"Web scraping failed for '{fighter_name}'")
+
+        except Exception as e:
+            logger.error(f"Error during web scraping: {e}", exc_info=True)
+
+    # 7. Fallback: retornar datos viejos si scraping falla
+    if fighter:
+        logger.warning(f"Using stale data for '{fighter_name}' (scraping failed)")
+
+    return fighter
+
+
+def _search_in_database(fighter_name: str) -> Optional[Dict]:
+    """Búsqueda exacta y fuzzy en fighter_database"""
+    if fighter_database is None:
+        return None
+
     # Búsqueda exacta primero
     exact_match = fighter_database[fighter_database['name'] == fighter_name]
-    
+
     if not exact_match.empty:
         return exact_match.iloc[0].to_dict()
-    
+
     # Búsqueda fuzzy
     fuzzy_match = fighter_database[
         fighter_database['name'].str.contains(fighter_name, case=False, na=False)
     ]
-    
+
     if not fuzzy_match.empty:
         return fuzzy_match.iloc[0].to_dict()
-    
+
     return None
 
+
+def _is_data_fresh(fighter: Dict, days: int = 7) -> bool:
+    """Verificar si los datos tienen menos de N días"""
+    last_updated = fighter.get('last_updated')
+
+    if not last_updated:
+        # Si no tiene timestamp, asumir que es viejo
+        return False
+
+    try:
+        if isinstance(last_updated, str):
+            last_updated_date = datetime.fromisoformat(last_updated)
+        else:
+            last_updated_date = last_updated
+
+        age_days = (datetime.now() - last_updated_date).days
+        return age_days < days
+
+    except Exception as e:
+        logger.warning(f"Could not parse last_updated: {e}")
+        return False
+
+
+def _update_or_add_to_csv(fighter_data: Dict):
+    """Actualizar o agregar peleador al CSV con timestamp"""
+    global fighter_database
+
+    csv_path = Path(__file__).parent.parent / 'data' / 'fighters_complete.csv'
+
+    # Agregar timestamp
+    fighter_data['last_updated'] = datetime.now().isoformat()
+
+    # Leer CSV actual
+    df = pd.read_csv(csv_path)
+
+    # Verificar si ya existe
+    existing_index = df[df['name'] == fighter_data['name']].index
+
+    if not existing_index.empty:
+        # Actualizar fila existente
+        for key, value in fighter_data.items():
+            if key in df.columns:
+                df.loc[existing_index[0], key] = value
+        logger.info(f"Updated existing fighter: {fighter_data['name']}")
+    else:
+        # Agregar nueva fila
+        new_row = pd.DataFrame([fighter_data])
+        df = pd.concat([df, new_row], ignore_index=True)
+        logger.info(f"Added new fighter: {fighter_data['name']}")
+
+    # Guardar CSV
+    df.to_csv(csv_path, index=False)
+
+
+def _reload_fighter_database():
+    """Recargar fighter_database en memoria desde CSV"""
+    global fighter_database
+
+    csv_path = Path(__file__).parent.parent / 'data' / 'fighters_complete.csv'
+
+    try:
+        fighter_database = pd.read_csv(csv_path)
+        logger.info(f"Reloaded fighter_database: {len(fighter_database)} fighters")
+    except Exception as e:
+        logger.error(f"Failed to reload fighter_database: {e}", exc_info=True)
+
 def engineer_fight_features(fighter_a_data: Dict, fighter_b_data: Dict, request: FightPredictionRequest) -> List[float]:
-    """Generar features para el modelo ML"""
-    
+    """Generar features para el modelo ML con manejo robusto de valores None/NaN"""
+
+    def safe_get(data: Dict, key: str, default: float) -> float:
+        """Obtener valor con manejo de None/NaN"""
+        value = data.get(key, default)
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Could not convert {key}={value} to float, using default {default}")
+            return default
+
     features = []
-    
+
     # Diferencias físicas
-    features.append(fighter_a_data.get('height', 180) - fighter_b_data.get('height', 180))
-    features.append(fighter_a_data.get('reach', 180) - fighter_b_data.get('reach', 180))
-    features.append(fighter_a_data.get('age', 30) - fighter_b_data.get('age', 30))
-    
+    height_a = safe_get(fighter_a_data, 'height', 180)
+    height_b = safe_get(fighter_b_data, 'height', 180)
+    features.append(height_a - height_b)
+
+    reach_a = safe_get(fighter_a_data, 'reach', 180)
+    reach_b = safe_get(fighter_b_data, 'reach', 180)
+    features.append(reach_a - reach_b)
+
+    age_a = safe_get(fighter_a_data, 'age', 30)
+    age_b = safe_get(fighter_b_data, 'age', 30)
+    features.append(age_a - age_b)
+
     # Diferencias de record
-    total_fights_a = fighter_a_data.get('wins', 0) + fighter_a_data.get('losses', 0)
-    total_fights_b = fighter_b_data.get('wins', 0) + fighter_b_data.get('losses', 0)
-    
-    win_rate_a = fighter_a_data.get('wins', 0) / max(total_fights_a, 1)
-    win_rate_b = fighter_b_data.get('wins', 0) / max(total_fights_b, 1)
-    
+    wins_a = safe_get(fighter_a_data, 'wins', 0)
+    losses_a = safe_get(fighter_a_data, 'losses', 0)
+    wins_b = safe_get(fighter_b_data, 'wins', 0)
+    losses_b = safe_get(fighter_b_data, 'losses', 0)
+
+    total_fights_a = wins_a + losses_a
+    total_fights_b = wins_b + losses_b
+
+    win_rate_a = wins_a / max(total_fights_a, 1)
+    win_rate_b = wins_b / max(total_fights_b, 1)
+
     features.append(win_rate_a - win_rate_b)
     features.append(total_fights_a - total_fights_b)
-    
+
     # Estadísticas de striking
-    features.append(fighter_a_data.get('striking_accuracy', 50) - fighter_b_data.get('striking_accuracy', 50))
-    features.append(fighter_a_data.get('striking_defense', 50) - fighter_b_data.get('striking_defense', 50))
-    
+    striking_acc_a = safe_get(fighter_a_data, 'striking_accuracy', 50)
+    striking_acc_b = safe_get(fighter_b_data, 'striking_accuracy', 50)
+    features.append(striking_acc_a - striking_acc_b)
+
+    striking_def_a = safe_get(fighter_a_data, 'striking_defense', 50)
+    striking_def_b = safe_get(fighter_b_data, 'striking_defense', 50)
+    features.append(striking_def_a - striking_def_b)
+
     # Estadísticas de grappling
-    features.append(fighter_a_data.get('takedown_accuracy', 30) - fighter_b_data.get('takedown_accuracy', 30))
-    features.append(fighter_a_data.get('takedown_defense', 70) - fighter_b_data.get('takedown_defense', 70))
-    
+    td_acc_a = safe_get(fighter_a_data, 'takedown_accuracy', 30)
+    td_acc_b = safe_get(fighter_b_data, 'takedown_accuracy', 30)
+    features.append(td_acc_a - td_acc_b)
+
+    td_def_a = safe_get(fighter_a_data, 'takedown_defense', 70)
+    td_def_b = safe_get(fighter_b_data, 'takedown_defense', 70)
+    features.append(td_def_a - td_def_b)
+
     # Contexto de la pelea
-    features.append(1 if request.title_fight else 0)
-    
+    features.append(1.0 if request.title_fight else 0.0)
+
     # Asegurar que tenemos el número correcto de features
     while len(features) < 16:  # Ajustar según modelo
         features.append(0.0)
-    
+
+    logger.debug(f"Engineered {len(features)} features: {features[:3]}... (showing first 3)")
+
     return features[:16]
 
 async def generate_llm_analysis(fighter_a_data: Dict, fighter_b_data: Dict, probabilities: np.ndarray) -> str:
