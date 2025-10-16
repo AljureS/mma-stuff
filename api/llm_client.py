@@ -118,8 +118,8 @@ class LLMClient:
         # Configuración general
         self.max_retries = max_retries
         self.timeout_seconds = timeout_seconds
-        # Ollama necesita más tiempo para modelos locales (default: 3x Claude timeout)
-        self.ollama_timeout_seconds = ollama_timeout_seconds or timeout_seconds
+        # Ollama necesita más tiempo para modelos locales
+        self.ollama_timeout_seconds = ollama_timeout_seconds if ollama_timeout_seconds is not None else (timeout_seconds * 3)
 
         # Circuit breakers
         self.claude_breaker = CircuitBreaker(failure_threshold=5, timeout=60)
