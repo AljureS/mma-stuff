@@ -90,7 +90,8 @@ class LLMClient:
         claude_model: str = "claude-sonnet-4-5-20250514",
         ollama_model: str = "qwen2.5:7b",
         max_retries: int = 3,
-        timeout_seconds: int = 30
+        timeout_seconds: int = 30,
+        ollama_timeout_seconds: Optional[int] = None
     ):
         """
         Inicializar cliente LLM
@@ -102,7 +103,8 @@ class LLMClient:
             claude_model: Modelo de Claude a usar
             ollama_model: Modelo de Ollama a usar
             max_retries: Máximo número de reintentos por proveedor
-            timeout_seconds: Timeout para requests
+            timeout_seconds: Timeout para requests Claude
+            ollama_timeout_seconds: Timeout específico para Ollama (default: mismo que timeout_seconds)
         """
         # Configuración Claude
         self.anthropic_api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -116,6 +118,8 @@ class LLMClient:
         # Configuración general
         self.max_retries = max_retries
         self.timeout_seconds = timeout_seconds
+        # Ollama necesita más tiempo para modelos locales (default: 3x Claude timeout)
+        self.ollama_timeout_seconds = ollama_timeout_seconds or timeout_seconds
 
         # Circuit breakers
         self.claude_breaker = CircuitBreaker(failure_threshold=5, timeout=60)
@@ -132,7 +136,10 @@ class LLMClient:
             )
             logger.info(f"Claude client initialized with model {self.claude_model}")
         else:
-            logger.warning("No ANTHROPIC_API_KEY found - Claude disabled, using Ollama only")
+            logger.warning(
+                f"No ANTHROPIC_API_KEY found - Claude disabled, using Ollama only "
+                f"({self.ollama_model} at {self.ollama_url}, timeout: {self.ollama_timeout_seconds}s)"
+            )
 
     async def generate(
         self,
@@ -304,8 +311,8 @@ class LLMClient:
                 if system_prompt:
                     payload["system"] = system_prompt
 
-                # Llamada HTTP a Ollama
-                timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+                # Llamada HTTP a Ollama (con timeout extendido para modelos locales)
+                timeout = aiohttp.ClientTimeout(total=self.ollama_timeout_seconds)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.post(
                         f"{self.ollama_url}/api/generate",
@@ -318,7 +325,7 @@ class LLMClient:
 
                 content = result.get("response", "")
 
-                logger.info(f"Ollama response generated in {latency_ms}ms")
+                logger.info(f"Ollama ({self.ollama_model}) response generated in {latency_ms}ms ({len(content)} chars)")
 
                 return LLMResponse(
                     content=content,
@@ -377,6 +384,9 @@ def get_llm_client() -> LLMClient:
     global _llm_client
 
     if _llm_client is None:
+        # Obtener timeout base
+        base_timeout = int(os.getenv("LLM_TIMEOUT", "30"))
+
         _llm_client = LLMClient(
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
             anthropic_endpoint=os.getenv("ANTHROPIC_ENDPOINT"),
@@ -384,7 +394,8 @@ def get_llm_client() -> LLMClient:
             claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250514"),
             ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
             max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
-            timeout_seconds=int(os.getenv("LLM_TIMEOUT", "30"))
+            timeout_seconds=30,  # Claude: siempre 30s (API remota rápida)
+            ollama_timeout_seconds=base_timeout  # Ollama: usa LLM_TIMEOUT del .env
         )
 
     return _llm_client

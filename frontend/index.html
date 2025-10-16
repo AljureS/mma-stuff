@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,12 +12,15 @@
         .fighter-card {
             transition: all 0.3s ease;
         }
+
         .fighter-card:hover {
             transform: translateY(-5px);
         }
+
         .prediction-glow {
             box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
         }
+
         .loading-spinner {
             border: 3px solid #f3f4f6;
             border-top: 3px solid #3b82f6;
@@ -25,12 +29,19 @@
             height: 24px;
             animation: spin 1s linear infinite;
         }
+
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
     </style>
 </head>
+
 <body class="bg-gray-900 text-white min-h-screen">
     <!-- Header -->
     <header class="bg-gray-800 shadow-lg">
@@ -56,7 +67,7 @@
                 <i class="fas fa-crystal-ball text-blue-400 mr-3"></i>
                 Predicción de Pelea
             </h2>
-            
+
             <div class="grid md:grid-cols-2 gap-8 mb-8">
                 <!-- Fighter A -->
                 <div class="fighter-card bg-gray-700 rounded-lg p-6">
@@ -64,9 +75,9 @@
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-2">Nombre</label>
-                            <input type="text" id="fighterA" 
-                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                   placeholder="e.g., Jon Jones">
+                            <input type="text" id="fighterA"
+                                class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="e.g., Jon Jones">
                         </div>
                         <div id="fighterAStats" class="hidden">
                             <div class="grid grid-cols-2 gap-2 text-sm">
@@ -89,9 +100,9 @@
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-2">Nombre</label>
-                            <input type="text" id="fighterB" 
-                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
-                                   placeholder="e.g., Stipe Miocic">
+                            <input type="text" id="fighterB"
+                                class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                placeholder="e.g., Stipe Miocic">
                         </div>
                         <div id="fighterBStats" class="hidden">
                             <div class="grid grid-cols-2 gap-2 text-sm">
@@ -113,7 +124,8 @@
             <div class="grid md:grid-cols-3 gap-4 mb-6">
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-2">Categoría de Peso</label>
-                    <select id="weightClass" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <select id="weightClass"
+                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <option value="">Seleccionar...</option>
                         <option value="heavyweight">Peso Pesado</option>
                         <option value="light-heavyweight">Semipesado</option>
@@ -127,9 +139,9 @@
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-2">Evento</label>
-                    <input type="text" id="eventName" 
-                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                           placeholder="e.g., UFC 300">
+                    <input type="text" id="eventName"
+                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., UFC 300">
                 </div>
                 <div class="flex items-end">
                     <label class="flex items-center">
@@ -141,8 +153,8 @@
 
             <!-- Predict Button -->
             <div class="text-center">
-                <button id="predictBtn" 
-                        class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="predictBtn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <i class="fas fa-magic mr-2"></i>
                     Predecir Resultado
                 </button>
@@ -157,7 +169,7 @@
                     <i class="fas fa-trophy text-yellow-400 mr-3"></i>
                     Resultado de la Predicción
                 </h2>
-                
+
                 <div class="grid md:grid-cols-2 gap-8 mb-8">
                     <!-- Probability Chart -->
                     <div class="bg-gray-700 rounded-lg p-6">
@@ -234,15 +246,14 @@
         </div>
 
         <!-- Upcoming Events -->
-        <div class="bg-gray-800 rounded-lg shadow-xl p-8 mt-8">
+        <!-- <div class="bg-gray-800 rounded-lg shadow-xl p-8 mt-8">
             <h2 class="text-2xl font-bold mb-6 flex items-center">
                 <i class="fas fa-calendar-alt text-orange-400 mr-3"></i>
                 Eventos Próximos
             </h2>
             <div id="upcomingEvents">
-                <!-- Upcoming events will be populated here -->
             </div>
-        </div>
+        </div> -->
     </main>
 
     <!-- Loading Modal -->
@@ -257,13 +268,13 @@
     <script>
         // Configuration
         const API_BASE_URL = 'http://localhost:8000';
-        
+
         // State
         let currentPrediction = null;
         let probabilityChart = null;
 
         // Initialize
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             initializeEventListeners();
             loadUpcomingEvents();
         });
@@ -271,11 +282,11 @@
         function initializeEventListeners() {
             // Predict button
             document.getElementById('predictBtn').addEventListener('click', makePrediction);
-            
+
             // Fighter inputs with debounced search
             let debounceTimer;
             ['fighterA', 'fighterB'].forEach(id => {
-                document.getElementById(id).addEventListener('input', function(e) {
+                document.getElementById(id).addEventListener('input', function (e) {
                     clearTimeout(debounceTimer);
                     debounceTimer = setTimeout(() => searchFighter(id, e.target.value), 500);
                 });
@@ -284,11 +295,11 @@
 
         async function searchFighter(inputId, query) {
             if (query.length < 2) return;
-            
+
             try {
                 const response = await fetch(`${API_BASE_URL}/search/fighters/${encodeURIComponent(query)}`);
                 const data = await response.json();
-                
+
                 if (data.results && data.results.length > 0) {
                     const fighter = data.results[0];
                     updateFighterStats(inputId, fighter);
@@ -303,29 +314,29 @@
             const statsDiv = document.getElementById(`fighter${letter}Stats`);
             const recordSpan = document.getElementById(`fighter${letter}Record`);
             const rankingSpan = document.getElementById(`fighter${letter}Ranking`);
-            
+
             recordSpan.textContent = fighter.record || '-';
             rankingSpan.textContent = fighter.ranking ? `#${fighter.ranking}` : 'NR';
-            
+
             statsDiv.classList.remove('hidden');
         }
 
         async function makePrediction() {
             const fighterA = document.getElementById('fighterA').value.trim();
             const fighterB = document.getElementById('fighterB').value.trim();
-            
+
             if (!fighterA || !fighterB) {
                 alert('Por favor ingresa ambos luchadores');
                 return;
             }
-            
+
             if (fighterA.toLowerCase() === fighterB.toLowerCase()) {
                 alert('Los luchadores deben ser diferentes');
                 return;
             }
-            
+
             showLoading(true);
-            
+
             try {
                 const requestData = {
                     fighter_a: fighterA,
@@ -335,7 +346,7 @@
                     title_fight: document.getElementById('titleFight').checked,
                     include_llm_analysis: true
                 };
-                
+
                 const response = await fetch(`${API_BASE_URL}/predict`, {
                     method: 'POST',
                     headers: {
@@ -343,17 +354,17 @@
                     },
                     body: JSON.stringify(requestData)
                 });
-                
+
                 if (!response.ok) {
                     const errorData = await response.json();
                     throw new Error(errorData.detail || 'Error making prediction');
                 }
-                
+
                 const prediction = await response.json();
                 currentPrediction = prediction;
-                
+
                 displayPredictionResults(prediction);
-                
+
             } catch (error) {
                 console.error('Error making prediction:', error);
                 alert(`Error: ${error.message}`);
@@ -365,41 +376,41 @@
         function displayPredictionResults(prediction) {
             // Show results section
             document.getElementById('resultsSection').classList.remove('hidden');
-            
+
             // Update summary
             document.getElementById('predictedWinner').textContent = prediction.predicted_winner;
             document.getElementById('confidence').textContent = `${(prediction.confidence * 100).toFixed(1)}%`;
-            
-            const winnerProb = prediction.predicted_winner === prediction.fighter_a ? 
-                              prediction.probability_a_wins : prediction.probability_b_wins;
+
+            const winnerProb = prediction.predicted_winner === prediction.fighter_a ?
+                prediction.probability_a_wins : prediction.probability_b_wins;
             document.getElementById('winProbability').textContent = `${(winnerProb * 100).toFixed(1)}%`;
-            
+
             // Update chart
             updateProbabilityChart(prediction);
-            
+
             // Update key factors
             displayKeyFactors(prediction.key_factors);
-            
+
             // Update AI analysis
-            document.getElementById('llmAnalysis').textContent = 
+            document.getElementById('llmAnalysis').textContent =
                 prediction.llm_analysis || 'Análisis no disponible';
-            
+
             // Update betting insights
             if (prediction.betting_insights) {
                 displayBettingInsights(prediction.betting_insights);
             }
-            
+
             // Scroll to results
             document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
         }
 
         function updateProbabilityChart(prediction) {
             const ctx = document.getElementById('probabilityChart').getContext('2d');
-            
+
             if (probabilityChart) {
                 probabilityChart.destroy();
             }
-            
+
             probabilityChart = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
@@ -434,13 +445,13 @@
         function displayKeyFactors(factors) {
             const container = document.getElementById('keyFactors');
             container.innerHTML = '';
-            
+
             factors.forEach(factor => {
                 const factorElement = document.createElement('div');
                 factorElement.className = 'flex justify-between items-center bg-gray-600 p-3 rounded';
-                
+
                 const impactColor = factor.impact === 'high' ? 'text-red-400' : 'text-yellow-400';
-                
+
                 factorElement.innerHTML = `
                     <span class="text-gray-300">${factor.factor}</span>
                     <div class="flex items-center">
@@ -448,7 +459,7 @@
                         <span class="${impactColor} text-sm">${factor.impact.toUpperCase()}</span>
                     </div>
                 `;
-                
+
                 container.appendChild(factorElement);
             });
         }
@@ -456,7 +467,7 @@
         function displayBettingInsights(insights) {
             const marketOddsDiv = document.getElementById('marketOdds');
             const recommendationDiv = document.getElementById('bettingRecommendation');
-            
+
             // Market odds
             if (insights.market_odds) {
                 let oddsHtml = '';
@@ -466,7 +477,7 @@
                 });
                 marketOddsDiv.innerHTML = oddsHtml;
             }
-            
+
             // Recommendation
             if (insights.recommendation) {
                 recommendationDiv.textContent = insights.recommendation;
@@ -477,20 +488,20 @@
             try {
                 const response = await fetch(`${API_BASE_URL}/events/upcoming`);
                 const events = await response.json();
-                
+
                 const container = document.getElementById('upcomingEvents');
                 container.innerHTML = '';
-                
+
                 events.forEach(event => {
                     const eventElement = document.createElement('div');
                     eventElement.className = 'bg-gray-700 rounded-lg p-6 mb-4';
-                    
+
                     let fightsHtml = '';
                     event.fights.forEach(fight => {
-                        const predictionInfo = fight.prediction ? 
+                        const predictionInfo = fight.prediction ?
                             `<span class="text-green-400 text-sm">${fight.prediction.winner} (${(fight.prediction.probability * 100).toFixed(0)}%)</span>` :
                             '<span class="text-gray-400 text-sm">Sin predicción</span>';
-                        
+
                         fightsHtml += `
                             <div class="flex justify-between items-center bg-gray-600 p-3 rounded mb-2">
                                 <div>
@@ -503,21 +514,21 @@
                             </div>
                         `;
                     });
-                    
+
                     eventElement.innerHTML = `
                         <h3 class="text-xl font-semibold mb-2">${event.event_name}</h3>
-                        <p class="text-gray-400 mb-4">${new Date(event.date).toLocaleDateString('es-ES', { 
-                            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-                        })}</p>
+                        <p class="text-gray-400 mb-4">${new Date(event.date).toLocaleDateString('es-ES', {
+                        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+                    })}</p>
                         <div>${fightsHtml}</div>
                     `;
-                    
+
                     container.appendChild(eventElement);
                 });
-                
+
             } catch (error) {
                 console.error('Error loading upcoming events:', error);
-                document.getElementById('upcomingEvents').innerHTML = 
+                document.getElementById('upcomingEvents').innerHTML =
                     '<p class="text-gray-400">Error cargando eventos próximos</p>';
             }
         }
@@ -532,4 +543,5 @@
         }
     </script>
 </body>
+
 </html>
