@@ -1,4 +1,4 @@
-# MMA Fight Predictor - Sistema de Predicción con IA
+# MMA Fight Predictor - Sistema de Predicción con ML + IA
 
 Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBoost) con análisis cualitativo mediante LLM. El modelo utiliza 16 features técnicas para calcular probabilidades de victoria, mientras que un sistema de IA dual (Claude API con fallback a Ollama local) genera análisis explicativos detallados. La arquitectura incluye cache inteligente con Redis, scraping automático de datos, y una interfaz web moderna para visualización de predicciones en tiempo real.
 
@@ -10,15 +10,15 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         USUARIO / NAVEGADOR                         │
 │                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐ │
-│  │              Frontend (HTML/CSS/JavaScript)                   │ │
-│  │           frontend/mma_frontend.html (puerto 8080)            │ │
-│  │  • Formulario de selección de peleadores                     │ │
-│  │  • Búsqueda autocompletada                                   │ │
-│  │  • Gráficos de probabilidades (Chart.js)                     │ │
-│  │  • Visualización de análisis IA                              │ │
-│  └─────────────────────┬─────────────────────────────────────────┘ │
-└────────────────────────┼─────────────────────────────────────────────┘
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │              Frontend (HTML/CSS/JavaScript)                   │  │
+│  │           frontend/index.html (puerto 8080)                   │  │
+│  │  • Formulario de selección de peleadores                      │  │
+│  │  • Búsqueda autocompletada                                    │  │
+│  │  • Gráficos de probabilidades (Chart.js)                      │  │
+│  │  • Visualización de análisis IA                               │  │
+│  └─────────────────────┬─────────────────────────────────────────┘  │
+└────────────────────────┼────────────────────────────────────────────┘
                          │ HTTP POST /predict
                          │ (include_llm_analysis: true/false)
                          ▼

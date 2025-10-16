@@ -1,0 +1,30 @@
+     .fighter-card {
+         transition: all 0.3s ease;
+     }
+
+     .fighter-card:hover {
+         transform: translateY(-5px);
+     }
+
+     .prediction-glow {
+         box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+     }
+
+     .loading-spinner {
+         border: 3px solid #f3f4f6;
+         border-top: 3px solid #3b82f6;
+         border-radius: 50%;
+         width: 24px;
+         height: 24px;
+         animation: spin 1s linear infinite;
+     }
+
+     @keyframes spin {
+         0% {
+             transform: rotate(0deg);
+         }
+
+         100% {
+             transform: rotate(360deg);
+         }
+     }

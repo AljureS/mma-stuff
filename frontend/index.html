@@ -5,41 +5,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMA Fight Predictor</title>
+    <!-- css libraries -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        .fighter-card {
-            transition: all 0.3s ease;
-        }
-
-        .fighter-card:hover {
-            transform: translateY(-5px);
-        }
-
-        .prediction-glow {
-            box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
-        }
-
-        .loading-spinner {
-            border: 3px solid #f3f4f6;
-            border-top: 3px solid #3b82f6;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
-        }
-    </style>
+    <!-- css -->
+    <link rel="stylesheet" href="css/styles.css">
 </head>
 
 <body class="bg-gray-900 text-white min-h-screen">
@@ -245,15 +216,6 @@
             </div>
         </div>
 
-        <!-- Upcoming Events -->
-        <!-- <div class="bg-gray-800 rounded-lg shadow-xl p-8 mt-8">
-            <h2 class="text-2xl font-bold mb-6 flex items-center">
-                <i class="fas fa-calendar-alt text-orange-400 mr-3"></i>
-                Eventos Próximos
-            </h2>
-            <div id="upcomingEvents">
-            </div>
-        </div> -->
     </main>
 
     <!-- Loading Modal -->
@@ -265,9 +227,13 @@
         </div>
     </div>
 
+    <!-- Custom JavaScript con Debug -->
     <script>
+        console.log('🔍 Script loaded successfully');
+
         // Configuration
         const API_BASE_URL = 'http://localhost:8000';
+        console.log('📡 API URL:', API_BASE_URL);
 
         // State
         let currentPrediction = null;
@@ -275,37 +241,59 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function () {
+            console.log('✅ DOM Content Loaded');
             initializeEventListeners();
             loadUpcomingEvents();
         });
 
         function initializeEventListeners() {
+            console.log('🎧 Initializing event listeners...');
+
             // Predict button
-            document.getElementById('predictBtn').addEventListener('click', makePrediction);
+            const predictBtn = document.getElementById('predictBtn');
+            if (predictBtn) {
+                console.log('✅ Predict button found');
+                predictBtn.addEventListener('click', function (e) {
+                    console.log('🖱️ Predict button CLICKED!');
+                    makePrediction();
+                });
+            } else {
+                console.error('❌ Predict button NOT FOUND');
+            }
 
             // Fighter inputs with debounced search
             let debounceTimer;
             ['fighterA', 'fighterB'].forEach(id => {
-                document.getElementById(id).addEventListener('input', function (e) {
-                    clearTimeout(debounceTimer);
-                    debounceTimer = setTimeout(() => searchFighter(id, e.target.value), 500);
-                });
+                const input = document.getElementById(id);
+                if (input) {
+                    console.log(`✅ Input ${id} found`);
+                    input.addEventListener('input', function (e) {
+                        clearTimeout(debounceTimer);
+                        debounceTimer = setTimeout(() => searchFighter(id, e.target.value), 500);
+                    });
+                } else {
+                    console.error(`❌ Input ${id} NOT FOUND`);
+                }
             });
         }
 
         async function searchFighter(inputId, query) {
             if (query.length < 2) return;
 
+            console.log(`🔍 Searching fighter: ${query}`);
+
             try {
                 const response = await fetch(`${API_BASE_URL}/search/fighters/${encodeURIComponent(query)}`);
                 const data = await response.json();
+
+                console.log('📦 Search results:', data);
 
                 if (data.results && data.results.length > 0) {
                     const fighter = data.results[0];
                     updateFighterStats(inputId, fighter);
                 }
             } catch (error) {
-                console.error('Error searching fighter:', error);
+                console.error('❌ Error searching fighter:', error);
             }
         }
 
@@ -322,15 +310,22 @@
         }
 
         async function makePrediction() {
+            console.log('🚀 makePrediction() called');
+
             const fighterA = document.getElementById('fighterA').value.trim();
             const fighterB = document.getElementById('fighterB').value.trim();
 
+            console.log('Fighter A:', fighterA);
+            console.log('Fighter B:', fighterB);
+
             if (!fighterA || !fighterB) {
+                console.warn('⚠️ Missing fighter names');
                 alert('Por favor ingresa ambos luchadores');
                 return;
             }
 
             if (fighterA.toLowerCase() === fighterB.toLowerCase()) {
+                console.warn('⚠️ Same fighter entered twice');
                 alert('Los luchadores deben ser diferentes');
                 return;
             }
@@ -347,6 +342,8 @@
                     include_llm_analysis: true
                 };
 
+                console.log('📤 Sending request:', requestData);
+
                 const response = await fetch(`${API_BASE_URL}/predict`, {
                     method: 'POST',
                     headers: {
@@ -355,18 +352,23 @@
                     body: JSON.stringify(requestData)
                 });
 
+                console.log('📥 Response status:', response.status);
+
                 if (!response.ok) {
                     const errorData = await response.json();
+                    console.error('❌ API Error:', errorData);
                     throw new Error(errorData.detail || 'Error making prediction');
                 }
 
                 const prediction = await response.json();
+                console.log('✅ Prediction received:', prediction);
+
                 currentPrediction = prediction;
 
                 displayPredictionResults(prediction);
 
             } catch (error) {
-                console.error('Error making prediction:', error);
+                console.error('❌ Error making prediction:', error);
                 alert(`Error: ${error.message}`);
             } finally {
                 showLoading(false);
@@ -374,6 +376,8 @@
         }
 
         function displayPredictionResults(prediction) {
+            console.log('📊 Displaying results...');
+
             // Show results section
             document.getElementById('resultsSection').classList.remove('hidden');
 
@@ -485,11 +489,19 @@
         }
 
         async function loadUpcomingEvents() {
+            console.log('📅 Loading upcoming events...');
             try {
                 const response = await fetch(`${API_BASE_URL}/events/upcoming`);
                 const events = await response.json();
 
+                console.log('📦 Events loaded:', events);
+
                 const container = document.getElementById('upcomingEvents');
+                if (!container) {
+                    console.warn('⚠️ upcomingEvents container not found (probably removed from HTML)');
+                    return;
+                }
+
                 container.innerHTML = '';
 
                 events.forEach(event => {
@@ -527,21 +539,30 @@
                 });
 
             } catch (error) {
-                console.error('Error loading upcoming events:', error);
-                document.getElementById('upcomingEvents').innerHTML =
-                    '<p class="text-gray-400">Error cargando eventos próximos</p>';
+                console.error('❌ Error loading upcoming events:', error);
             }
         }
 
         function showLoading(show) {
+            console.log('⏳ Loading modal:', show ? 'SHOW' : 'HIDE');
             const modal = document.getElementById('loadingModal');
-            if (show) {
-                modal.classList.remove('hidden');
+            if (modal) {
+                if (show) {
+                    modal.classList.remove('hidden');
+                } else {
+                    modal.classList.add('hidden');
+                }
             } else {
-                modal.classList.add('hidden');
+                console.error('❌ Loading modal NOT FOUND');
             }
         }
     </script>
+
+
+
+    <!-- Custom JavaScript -->
+    <script src="js/script.js"></script>
+
 </body>
 
 </html>
