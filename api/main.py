@@ -608,15 +608,17 @@ async def generate_llm_analysis(fighter_a_data: Dict, fighter_b_data: Dict, prob
 
 **Predicción del modelo ML:** {probabilities[1]:.1%} para {fighter_a_data['name']} vs {probabilities[0]:.1%} para {fighter_b_data['name']}
 
-Proporciona un análisis de 2-3 párrafos que incluya:
+IMPORTANTE: Escribe un análisis de MÁXIMO 700 palabras, asegurándote de completar todos tus párrafos y pensamientos de forma coherente. No dejes frases a la mitad.
+
+El análisis debe incluir 2-3 párrafos bien estructurados que cubran:
 1. Ventajas/desventajas clave de cada peleador
 2. Factores críticos del matchup (físicos, técnicos, estilos)
 3. Escenarios de victoria más probables
 4. Tu evaluación de la predicción del modelo
 
-Sé específico y técnico usando tu conocimiento de MMA."""
+Sé específico y técnico usando tu conocimiento de MMA. IMPORTANTE: Termina el análisis con una conclusión completa, no cortes a la mitad de una frase."""
 
-        system_prompt = "Eres un analista experto en MMA con profundo conocimiento técnico de striking, grappling, y estrategias de combate."
+        system_prompt = "Eres un analista experto en MMA con profundo conocimiento técnico de striking, grappling, y estrategias de combate. Siempre completas tus análisis de forma coherente sin dejar frases incompletas."
 
         # Usar LLM client con fallback automático
         response = await llm_client.generate(

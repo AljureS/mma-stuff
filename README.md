@@ -123,3 +123,37 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 8. **PostgreSQL (Opcional)** - Base de datos relacional para almacenamiento persistente de peleas y resultados históricos
 9. **CSV Data Store (data/)** - Archivos planos con datos de peleadores, historial de peleas y datos de entrenamiento del modelo
 10. **Web Scraper (data_collection.py)** - Sistema automatizado que recopila datos frescos de UFCStats, Sherdog y Tapology cuando los datos tienen >7 días
+
+
+# ============================================
+# INICIAR MMA PREDICTOR - COPIAR Y PEGAR TODO
+# ============================================
+
+# Terminal 1 - Backend API
+cd ~/mma-stuff/api
+source venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port 8000
+
+# ============================================
+# ABRIR NUEVA TERMINAL PARA ESTO:
+# ============================================
+
+# Terminal 2 - Frontend
+cd ~/mma-stuff
+python3 -m http.server 3000
+
+# ============================================
+# ABRIR EN NAVEGADOR:
+# http://localhost:3000
+# http://localhost:8000/docs
+# ============================================
+
+# ============================================
+# VERIFICAR (opcional - en Terminal 3)
+# ============================================
+curl http://localhost:8000/
+curl http://localhost:3000/
+
+# ============================================
+# PARAR TODO: Ctrl+C en cada terminal
+# ============================================
