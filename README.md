@@ -1,6 +1,6 @@
 # MMA Fight Predictor - Sistema de Predicción con ML + IA
 
-Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBoost) con análisis cualitativo mediante LLM. El modelo utiliza 16 features técnicas para calcular probabilidades de victoria, mientras que un sistema de IA dual (Claude API con fallback a Ollama local) genera análisis explicativos detallados. La arquitectura incluye cache inteligente con Redis, scraping automático de datos, y una interfaz web moderna para visualización de predicciones en tiempo real.
+Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBoost) con análisis cualitativo mediante LLM(claude | local con qwen ). El modelo utiliza 16 features técnicas para calcular probabilidades de victoria, mientras que un sistema de IA dual (Claude API con fallback a Ollama local) genera análisis explicativos detallados. La arquitectura incluye cache inteligente con Redis, scraping automático de datos, y una interfaz web moderna para visualización de predicciones en tiempo real.
 
 ---
 
@@ -12,9 +12,8 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │              Frontend (HTML/CSS/JavaScript)                   │  │
-│  │           frontend/index.html (puerto 8080)                   │  │
-│  │  • Formulario de selección de peleadores                      │  │
-│  │  • Búsqueda autocompletada                                    │  │
+│  │            frontend/index.html (puerto 3000)                  │  │
+│  │  • Input de peleadores                                        │  │
 │  │  • Gráficos de probabilidades (Chart.js)                      │  │
 │  │  • Visualización de análisis IA                               │  │
 │  └─────────────────────┬─────────────────────────────────────────┘  │
@@ -26,26 +25,26 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 │                       BACKEND - FastAPI                             │
 │                   api/main.py (puerto 8000)                         │
 │                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │  1. Validar peleadores en DB                                │  │
-│  │  2. Cargar datos completos (fighters_complete.csv)          │  │
-│  │  3. Calcular 16 features del modelo                         │  │
-│  └─────────────────────┬───────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  1. Validar peleadores en DB                                │    │
+│  │  2. Cargar datos completos (fighters_complete.csv)          │    │
+│  │  3. Calcular 16 features del modelo                         │    │
+│  └─────────────────────┬───────────────────────────────────────┘    │
 │                        │                                            │
 │                        ▼                                            │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │         PREDICCIÓN ML (XGBoost)                             │  │
-│  │         models/mma_prediction_model.pkl                     │  │
-│  │  • Input: 16 features (diferencias físicas, técnicas, etc.)│  │
-│  │  • Output: Probabilidades (ej: 80.5% vs 19.5%)             │  │
-│  │  • ⚠️ AQUÍ SE DEFINEN LOS % - NADA MÁS LOS AFECTA          │  │
-│  └─────────────────────┬───────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │         PREDICCIÓN ML (XGBoost)                             │    │
+│  │         models/mma_prediction_model.pkl                     │    │
+│  │  • Input: 16 features (diferencias físicas, técnicas, etc.) │    │
+│  │  • Output: Probabilidades (ej: 80.5% vs 19.5%)              │    │
+│  │  • ⚠️ AQUÍ SE DEFINEN LOS %                                 |    |
+│  └─────────────────────┬───────────────────────────────────────┘    │
 │                        │                                            │
 │                        ▼                                            │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │  4. Generar análisis LLM (si include_llm_analysis=true)    │  │
-│  │     → Llama a llm_client.generate()                         │  │
-│  └─────────────────────┬───────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  4. Generar análisis LLM (si include_llm_analysis=true)     │    │ 
+│  │     → Llama a llm_client.generate()                         │    │
+│  └─────────────────────┬───────────────────────────────────────┘    │
 │                        │                                            │
 └────────────────────────┼────────────────────────────────────────────┘
                          │
@@ -54,59 +53,59 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 │                    LLM CLIENT (Orquestador)                         │
 │                     api/llm_client.py                               │
 │                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │  async def generate():                                      │  │
-│  │    1. ¿Claude disponible? → Intentar Claude API            │  │
-│  │    2. Si falla/timeout → Fallback automático a Ollama      │  │
-│  │    3. Reintentos exponenciales (1s, 2s, 4s)                │  │
-│  │    4. Circuit breaker para proteger servicios              │  │
-│  └─────────────────────┬───────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  async def generate():                                      │    │
+│  │    1. ¿Claude disponible? → Intentar Claude API             │    │
+│  │    2. Si falla/timeout → Fallback automático a Ollama       │    │
+│  │    3. Reintentos exponenciales (1s, 2s, 4s)                 │    │
+│  │    4. Circuit breaker para proteger servicios               │    │
+│  └─────────────────────┬───────────────────────────────────────┘    │
 │                        │                                            │
-│          ┌─────────────┴─────────────┐                             │
-│          │                           │                             │
-│          ▼                           ▼                             │
-│  ┌───────────────┐          ┌────────────────────┐                │
-│  │ Claude API    │          │ Ollama Local       │                │
-│  │ (Primario)    │  FALLA   │ (Fallback)         │                │
-│  │               │  ───→    │                    │                │
-│  │ Sonnet 4.5    │          │ Qwen2.5:7b         │                │
-│  │ Timeout: 30s  │          │ Timeout: 180s      │                │
-│  │ Externo/Rápido│          │ Local/Lento        │                │
-│  └───────────────┘          └────────────────────┘                │
+│          ┌─────────────┴─────────────┐                              │
+│          │                           │                              │
+│          ▼                           ▼                              │
+│  ┌───────────────┐          ┌────────────────────┐                  │
+│  │ Claude API    │          │ Ollama Local       │                  │
+│  │ (Primario)    │  FALLA   │ (Fallback)         │                  │
+│  │               │  ───→    │                    │                  │
+│  │ Sonnet 4.5    │          │ Qwen2.5:7b         │                  │
+│  │ Timeout: 30s  │          │ Timeout: 180s      │                  │
+│  │ Externo/Rápido│          │ Local/Lento        │                  │
+│  └───────────────┘          └────────────────────┘                  │
 │                                                                     │
-│  📝 LLM genera análisis cualitativo DESPUÉS de la predicción       │
-│  ⚠️ NO modifica los % - solo explica el resultado del modelo ML    │
+│  📝 LLM genera análisis cualitativo DESPUÉS de la predicción        │
+│  ⚠️ NO modifica los % - solo explica el resultado del modelo ML     │
 └─────────────────────────────────────────────────────────────────────┘
                          │
                          │ Análisis generado (1200-1500 chars)
                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                 ALMACENAMIENTO Y DATOS                              │
-│                                                                     │
-│  ┌──────────────────────┐     ┌──────────────────────────────┐    │
-│  │  PostgreSQL          │     │  Redis Cache                 │    │
-│  │  Base de datos       │     │  Cache de predicciones       │    │
-│  │  principal           │     │  • TTL: 1 hora (3600s)       │    │
-│  │  (Opcional)          │     │  • Key: prediction:{A}:{B}   │    │
-│  └──────────────────────┘     │  • Evita recálculos          │    │
-│                               └──────────────────────────────┘    │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  Archivos CSV                                                │ │
-│  │  data/fighters_complete.csv  - Base de datos de peleadores  │ │
-│  │  data/fight_history.csv      - Historial de peleas          │ │
-│  │  data/training_data.csv      - Datos para entrenar modelo   │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  Web Scraping (Actualización de Datos)                      │ │
-│  │  scripts/data_collection.py                                 │ │
-│  │  • UFCStats.com - Estadísticas oficiales                    │ │
-│  │  • Sherdog - Rankings y datos históricos                    │ │
-│  │  • Tapology - Eventos futuros                               │ │
-│  │  • Auto-scraping si datos > 7 días de antigüedad            │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                 ALMACENAMIENTO Y DATOS                             │
+│                                                                    │
+│  ┌──────────────────────┐     ┌──────────────────────────────┐     │
+│  │  PostgreSQL          │     │  Redis Cache                 │     │
+│  │  Base de datos       │     │  Cache de predicciones       │     │
+│  │  principal           │     │  • TTL: 1 hora (3600s)       │     │
+│  │  (Opcional)          │     │  • Key: prediction:{A}:{B}   │     │
+│  └──────────────────────┘     │  • Evita recálculos          │     │
+│                               └──────────────────────────────┘     │
+│                                                                    │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Archivos CSV                                                │  │
+│  │  data/fighters_complete.csv  - Base de datos de peleadores   │  │
+│  │  data/fight_history.csv      - Historial de peleas           │  │
+│  │  data/training_data.csv      - Datos para entrenar modelo    │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Web Scraping (Actualización de Datos)                       │  │
+│  │  scripts/data_collection.py                                  │  │
+│  │  • UFCStats.com - Estadísticas oficiales                     │  │
+│  │  • Sherdog - Rankings y datos históricos                     │  │
+│  │  • Tapology - Eventos futuros                                │  │
+│  │  • Auto-scraping si datos > 7 días de antigüedad             │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -132,7 +131,7 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 # Terminal 1 - Backend API
 cd ~/mma-stuff/api
 source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8000
+python main.py
 
 # ============================================
 # ABRIR NUEVA TERMINAL PARA ESTO:

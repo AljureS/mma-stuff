@@ -700,4 +700,12 @@ def get_current_ranking(fighter_name: str, weight_class: Optional[str]) -> Optio
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    import sys
+    import os
+    
+    # En desarrollo con reload
+    if "--reload" in sys.argv or os.getenv("DEBUG"):
+        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    else:
+        # En producción sin reload
+        uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
