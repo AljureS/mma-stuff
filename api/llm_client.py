@@ -1,9 +1,9 @@
 """
-LLM Client con fallback: Claude (Anthropic) -> Ollama (Qwen2.5:7b)
+LLM Client con fallback: OpenAI (gpt-4o-mini) -> Ollama (Qwen2.5:7b)
 
 Características:
 - Reintentos exponenciales con backoff
-- Fallback automático a Ollama si Claude falla
+- Fallback automático a Ollama si OpenAI falla
 - Logging detallado de métricas
 - Circuit breaker para proteger servicios
 """
@@ -18,14 +18,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import aiohttp
-from anthropic import AsyncAnthropic, APIError, RateLimitError, APITimeoutError
+from openai import AsyncOpenAI, APIError, RateLimitError, APITimeoutError
 
 logger = logging.getLogger(__name__)
 
 
 class LLMProvider(str, Enum):
     """Proveedores LLM disponibles"""
-    CLAUDE = "claude"
+    OPENAI = "openai"
     OLLAMA = "ollama"
 
 
@@ -80,14 +80,14 @@ class CircuitBreaker:
 
 
 class LLMClient:
-    """Cliente LLM con fallback Claude -> Ollama"""
+    """Cliente LLM con fallback OpenAI -> Ollama"""
 
     def __init__(
         self,
-        anthropic_api_key: Optional[str] = None,
-        anthropic_endpoint: Optional[str] = None,
+        openai_api_key: Optional[str] = None,
+        openai_base_url: Optional[str] = None,
         ollama_url: str = "http://localhost:11434",
-        claude_model: str = "claude-sonnet-4-5-20250514",
+        openai_model: str = "gpt-4o-mini",
         ollama_model: str = "qwen2.5:7b",
         max_retries: int = 3,
         timeout_seconds: int = 30,
@@ -97,19 +97,19 @@ class LLMClient:
         Inicializar cliente LLM
 
         Args:
-            anthropic_api_key: API key de Anthropic (default: desde env)
-            anthropic_endpoint: Endpoint personalizado de Anthropic (opcional)
+            openai_api_key: API key de OpenAI (default: desde env)
+            openai_base_url: Base URL personalizada de OpenAI (opcional)
             ollama_url: URL de Ollama (default: localhost:11434)
-            claude_model: Modelo de Claude a usar
+            openai_model: Modelo de OpenAI a usar
             ollama_model: Modelo de Ollama a usar
             max_retries: Máximo número de reintentos por proveedor
-            timeout_seconds: Timeout para requests Claude
+            timeout_seconds: Timeout para requests OpenAI
             ollama_timeout_seconds: Timeout específico para Ollama (default: mismo que timeout_seconds)
         """
-        # Configuración Claude
-        self.anthropic_api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
-        self.anthropic_endpoint = anthropic_endpoint or os.getenv("ANTHROPIC_ENDPOINT")
-        self.claude_model = claude_model
+        # Configuración OpenAI
+        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        self.openai_base_url = openai_base_url or os.getenv("OPENAI_BASE_URL")
+        self.openai_model = openai_model
 
         # Configuración Ollama
         self.ollama_url = ollama_url
@@ -122,22 +122,23 @@ class LLMClient:
         self.ollama_timeout_seconds = ollama_timeout_seconds if ollama_timeout_seconds is not None else (timeout_seconds * 3)
 
         # Circuit breakers
-        self.claude_breaker = CircuitBreaker(failure_threshold=5, timeout=60)
+        self.openai_breaker = CircuitBreaker(failure_threshold=5, timeout=60)
         self.ollama_breaker = CircuitBreaker(failure_threshold=3, timeout=30)
 
-        # Cliente Anthropic
-        self.claude_client: Optional[AsyncAnthropic] = None
-        if self.anthropic_api_key:
-            base_url = self.anthropic_endpoint if self.anthropic_endpoint else None
-            self.claude_client = AsyncAnthropic(
-                api_key=self.anthropic_api_key,
+        # Cliente OpenAI
+        self.openai_client: Optional[AsyncOpenAI] = None
+        if self.openai_api_key:
+            base_url = self.openai_base_url if self.openai_base_url else None
+            # timeout explícito: el default del SDK es 600s y rompería el fast-fallback
+            self.openai_client = AsyncOpenAI(
+                api_key=self.openai_api_key,
                 base_url=base_url,
                 timeout=timeout_seconds
             )
-            logger.info(f"Claude client initialized with model {self.claude_model}")
+            logger.info(f"OpenAI client initialized with model {self.openai_model}")
         else:
             logger.warning(
-                f"No ANTHROPIC_API_KEY found - Claude disabled, using Ollama only "
+                f"No OPENAI_API_KEY found - OpenAI disabled, using Ollama only "
                 f"({self.ollama_model} at {self.ollama_url}, timeout: {self.ollama_timeout_seconds}s)"
             )
 
@@ -156,7 +157,7 @@ class LLMClient:
             prompt: Prompt del usuario
             system_prompt: System prompt (opcional)
             max_tokens: Máximo de tokens a generar
-            temperature: Temperatura (0-1, más alto = más creativo)
+            temperature: Temperatura (más alto = más creativo)
             force_provider: Forzar proveedor específico (opcional)
 
         Returns:
@@ -168,33 +169,33 @@ class LLMClient:
         if force_provider == LLMProvider.OLLAMA:
             return await self._generate_ollama(prompt, system_prompt, max_tokens, temperature)
 
-        # Intentar Claude primero (si disponible y circuit breaker cerrado)
-        if self.claude_client and not self.claude_breaker.is_open():
+        # Intentar OpenAI primero (si disponible y circuit breaker cerrado)
+        if self.openai_client and not self.openai_breaker.is_open():
             try:
-                response = await self._generate_claude(prompt, system_prompt, max_tokens, temperature)
-                self.claude_breaker.record_success()
+                response = await self._generate_openai(prompt, system_prompt, max_tokens, temperature)
+                self.openai_breaker.record_success()
                 return response
 
             except (RateLimitError, APITimeoutError) as e:
-                logger.warning(f"Claude failed ({type(e).__name__}), falling back to Ollama: {e}")
-                self.claude_breaker.record_failure()
+                logger.warning(f"OpenAI failed ({type(e).__name__}), falling back to Ollama: {e}")
+                self.openai_breaker.record_failure()
                 # Fallback automático a Ollama
 
             except APIError as e:
-                logger.error(f"Claude API error: {e}")
-                self.claude_breaker.record_failure()
+                logger.error(f"OpenAI API error: {e}")
+                self.openai_breaker.record_failure()
                 # Fallback a Ollama
 
             except Exception as e:
-                logger.error(f"Unexpected error with Claude: {e}", exc_info=True)
-                self.claude_breaker.record_failure()
+                logger.error(f"Unexpected error with OpenAI: {e}", exc_info=True)
+                self.openai_breaker.record_failure()
                 # Fallback a Ollama
 
         # Usar Ollama (como fallback o primario)
         if not self.ollama_breaker.is_open():
             try:
                 response = await self._generate_ollama(prompt, system_prompt, max_tokens, temperature)
-                response.fallback_used = self.claude_client is not None  # True si Claude estaba disponible
+                response.fallback_used = self.openai_client is not None  # True si OpenAI estaba disponible
                 self.ollama_breaker.record_success()
                 return response
 
@@ -222,66 +223,70 @@ class LLMClient:
             error="All circuit breakers open"
         )
 
-    async def _generate_claude(
+    async def _generate_openai(
         self,
         prompt: str,
         system_prompt: Optional[str],
         max_tokens: int,
         temperature: float
     ) -> LLMResponse:
-        """Generar usando Claude con reintentos exponenciales"""
+        """Generar usando OpenAI con reintentos exponenciales"""
 
         for attempt in range(self.max_retries):
             try:
                 start_time = time.time()
 
-                # Construir mensajes
-                messages = [{"role": "user", "content": prompt}]
+                # Construir mensajes (el system prompt va como primer mensaje)
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
 
-                # Llamada a Claude
-                response = await self.claude_client.messages.create(
-                    model=self.claude_model,
-                    max_tokens=max_tokens,
+                # Llamada a OpenAI
+                response = await self.openai_client.chat.completions.create(
+                    model=self.openai_model,
+                    max_completion_tokens=max_tokens,
                     temperature=temperature,
-                    system=system_prompt if system_prompt else "",
                     messages=messages
                 )
 
                 latency_ms = int((time.time() - start_time) * 1000)
 
-                # Extraer contenido
-                content = response.content[0].text if response.content else ""
+                # Extraer contenido (content puede ser None)
+                content = response.choices[0].message.content or ""
+                usage = response.usage
 
                 logger.info(
-                    f"Claude response generated in {latency_ms}ms "
-                    f"(input: {response.usage.input_tokens}, output: {response.usage.output_tokens})"
+                    f"OpenAI response generated in {latency_ms}ms "
+                    f"(input: {usage.prompt_tokens if usage else '?'}, "
+                    f"output: {usage.completion_tokens if usage else '?'})"
                 )
 
                 return LLMResponse(
                     content=content,
-                    provider=LLMProvider.CLAUDE,
-                    model=self.claude_model,
+                    provider=LLMProvider.OPENAI,
+                    model=self.openai_model,
                     latency_ms=latency_ms,
-                    tokens_used=response.usage.input_tokens + response.usage.output_tokens,
+                    tokens_used=usage.total_tokens if usage else None,
                     fallback_used=False
                 )
 
             except (RateLimitError, APITimeoutError) as e:
                 # No reintentar en rate limit o timeout - ir a fallback inmediatamente
-                logger.warning(f"Claude {type(e).__name__} on attempt {attempt + 1}")
+                logger.warning(f"OpenAI {type(e).__name__} on attempt {attempt + 1}")
                 raise
 
             except APIError as e:
                 if attempt < self.max_retries - 1:
                     # Backoff exponencial: 1s, 2s, 4s
                     wait_time = 2 ** attempt
-                    logger.warning(f"Claude API error on attempt {attempt + 1}, retrying in {wait_time}s: {e}")
+                    logger.warning(f"OpenAI API error on attempt {attempt + 1}, retrying in {wait_time}s: {e}")
                     await asyncio.sleep(wait_time)
                 else:
                     raise
 
             except Exception as e:
-                logger.error(f"Unexpected Claude error on attempt {attempt + 1}: {e}")
+                logger.error(f"Unexpected OpenAI error on attempt {attempt + 1}: {e}")
                 raise
 
     async def _generate_ollama(
@@ -350,10 +355,10 @@ class LLMClient:
     async def health_check(self) -> Dict[str, Any]:
         """Verificar estado de ambos proveedores"""
         status = {
-            "claude": {
-                "available": self.claude_client is not None,
-                "circuit_breaker": self.claude_breaker.state,
-                "failures": self.claude_breaker.failures
+            "openai": {
+                "available": self.openai_client is not None,
+                "circuit_breaker": self.openai_breaker.state,
+                "failures": self.openai_breaker.failures
             },
             "ollama": {
                 "available": True,  # Asumimos que Ollama siempre está configurado
@@ -388,13 +393,13 @@ def get_llm_client() -> LLMClient:
         base_timeout = int(os.getenv("LLM_TIMEOUT", "30"))
 
         _llm_client = LLMClient(
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-            anthropic_endpoint=os.getenv("ANTHROPIC_ENDPOINT"),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_base_url=os.getenv("OPENAI_BASE_URL"),
             ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-            claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250514"),
+            openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
             max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
-            timeout_seconds=30,  # Claude: siempre 30s (API remota rápida)
+            timeout_seconds=30,  # OpenAI: siempre 30s (API remota rápida)
             ollama_timeout_seconds=base_timeout  # Ollama: usa LLM_TIMEOUT del .env
         )
 

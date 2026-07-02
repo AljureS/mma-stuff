@@ -590,7 +590,7 @@ def engineer_fight_features(fighter_a_data: Dict, fighter_b_data: Dict, request:
     return features[:16]
 
 async def generate_llm_analysis(fighter_a_data: Dict, fighter_b_data: Dict, probabilities: np.ndarray) -> str:
-    """Generar análisis usando LLM con fallback Claude -> Ollama"""
+    """Generar análisis usando LLM con fallback OpenAI -> Ollama"""
 
     try:
         # Construir prompt detallado

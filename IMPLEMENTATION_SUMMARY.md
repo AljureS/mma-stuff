@@ -1,5 +1,7 @@
 # Resumen de Implementación - Sistema LLM con Fallback
 
+> **📌 Actualización 2026-06-09:** el proveedor primario migró de Claude (Anthropic) a **OpenAI gpt-4o-mini** (`openai==2.41.0`), manteniendo el fallback a Ollama, los circuit breakers y la misma arquitectura. Este documento describe la implementación original con Claude como registro histórico; para el estado actual ver `CLAUDE.md` y `README_LLM.md`.
+
 ## ✅ Completado
 
 Se ha implementado exitosamente un **sistema LLM robusto con fallback automático** que usa:

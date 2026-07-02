@@ -4,7 +4,7 @@
 
 Sistema LLM para uso personal que usa:
 
-1. **Proveedor primario**: Claude Sonnet 4.5 (Anthropic API)
+1. **Proveedor primario**: OpenAI gpt-4o-mini (API de OpenAI)
 2. **Fallback automático**: Ollama con Qwen2.5:7b (local)
 
 **Nota**: Esta guía está enfocada en **ejecución local** para uso personal.
@@ -31,14 +31,14 @@ Sistema LLM para uso personal que usa:
        │                       │
        ▼                       ▼
 ┌─────────────┐       ┌──────────────────┐
-│ Claude API  │       │  Ollama Local    │
+│ OpenAI API  │       │  Ollama Local    │
 │             │       │                  │
-│ Sonnet 4.5  │ (1°)  │  Qwen2.5:7b      │ (Fallback)
+│ gpt-4o-mini │ (1°)  │  Qwen2.5:7b      │ (Fallback)
 │             │       │                  │
 │ • Calidad   │       │  • Sin costo API │
-│   superior  │       │  • Baja latencia │
-│ • ~$0.01 por│       │  • Offline       │
-│   análisis  │       │                  │
+│   buena     │       │  • Offline       │
+│ • ~$0.0005  │       │  • Privado       │
+│ por análisis│       │                  │
 └─────────────┘       └──────────────────┘
 ```
 
@@ -47,29 +47,22 @@ Sistema LLM para uso personal que usa:
 ### 1. Instalar dependencias Python
 
 ```bash
-cd /home/saidsimon2/mma-predictor/api
+cd api
 pip install -r requirements.txt
 ```
 
-### 2. Configurar API Key de Anthropic
+### 2. Configurar API Key de OpenAI
 
-Tu archivo `.env` ya tiene tu API key configurada. Si necesitas cambiarla:
+Obtén tu key en https://platform.openai.com/api-keys y ponla en `api/.env`:
 
 ```bash
-nano /home/saidsimon2/mma-predictor/api/.env
-```
-
-Verifica que tenga:
-```bash
-ANTHROPIC_API_KEY=sk-ant-api03-...  # Tu key actual
+OPENAI_API_KEY=sk-proj-...          # Tu key de OpenAI
+OPENAI_MODEL=gpt-4o-mini
 OLLAMA_URL=http://localhost:11434
-CLAUDE_MODEL=claude-sonnet-4-5-20250514
 OLLAMA_MODEL=qwen2.5:7b
 ```
 
-### 3. Verificar Ollama (ya instalado)
-
-Ya tienes Ollama y Qwen2.5:7b instalados. Solo verifica:
+### 3. Verificar Ollama (opcional, es el fallback)
 
 ```bash
 # Verificar que tienes el modelo
@@ -85,7 +78,7 @@ ollama list | grep qwen
 redis-server
 ```
 
-**Terminal 2 - Ollama:**
+**Terminal 2 - Ollama (opcional):**
 ```bash
 ollama serve
 ```
@@ -93,14 +86,14 @@ ollama serve
 **Terminal 3 - API:**
 
 ```bash
-cd /home/saidsimon2/mma-predictor/api
+cd api
 python main.py
 ```
 
 Verás:
 ```
 INFO: Models and data loaded successfully
-INFO: Claude client initialized with model claude-sonnet-4-5-20250514
+INFO: OpenAI client initialized with model gpt-4o-mini
 INFO: Uvicorn running on http://0.0.0.0:8000
 ```
 
@@ -121,7 +114,7 @@ curl http://localhost:8000/health/llm | jq
 {
   "status": "healthy",
   "providers": {
-    "claude": {"available": true, "circuit_breaker": "closed"},
+    "openai": {"available": true, "circuit_breaker": "closed"},
     "ollama": {"available": true, "reachable": true}
   }
 }
@@ -130,7 +123,7 @@ curl http://localhost:8000/health/llm | jq
 ### 6. (Opcional) Ejecutar tests
 
 ```bash
-cd /home/saidsimon2/mma-predictor
+# Desde la raíz del proyecto
 pytest tests/test_llm_client.py -v
 ```
 
@@ -190,14 +183,16 @@ response = await llm.generate(
 ```python
 # En api/.env
 LLM_MAX_RETRIES=5          # Default: 3
-LLM_TIMEOUT=60             # Default: 30 (segundos)
+LLM_TIMEOUT=180            # Aplica SOLO a Ollama (OpenAI fijo en 30s)
 ```
 
 ### Customizar modelos
 
-```python
-# Usar otro modelo de Claude
-CLAUDE_MODEL=claude-3-5-haiku-20241022  # Más barato
+```bash
+# Usar otro modelo de OpenAI (precios junio 2026, por 1M tokens in/out)
+OPENAI_MODEL=gpt-4o-mini       # $0.15/$0.60 - default, mejor calidad/precio
+OPENAI_MODEL=gpt-4.1-nano      # $0.10/$0.40 - el más barato, redacción más débil
+OPENAI_MODEL=gpt-4.1-mini      # $0.40/$1.60 - mejor calidad, ~2.6x el precio
 
 # Usar otro modelo de Ollama
 OLLAMA_MODEL=llama3.1:8b
@@ -210,13 +205,13 @@ from llm_client import LLMClient, CircuitBreaker
 
 # Crear cliente con configuración custom
 llm = LLMClient(
-    anthropic_api_key="sk-ant-...",
+    openai_api_key="sk-proj-...",
     max_retries=5,
     timeout_seconds=45
 )
 
 # Ajustar thresholds del circuit breaker
-llm.claude_breaker = CircuitBreaker(
+llm.openai_breaker = CircuitBreaker(
     failure_threshold=10,  # Default: 5
     timeout=120            # Default: 60 segundos
 )
@@ -229,12 +224,12 @@ llm.claude_breaker = CircuitBreaker(
 El sistema registra automáticamente:
 
 ```
-INFO: LLM analysis generated using claude (claude-sonnet-4-5-20250514) in 1234ms (fallback: False)
+INFO: LLM analysis generated using openai (gpt-4o-mini) in 12510ms (fallback: False)
 ```
 
 ```
-WARNING: Claude RateLimitError on attempt 1, falling back to Ollama
-INFO: LLM analysis generated using ollama (qwen2.5:7b) in 456ms (fallback: True)
+WARNING: OpenAI RateLimitError on attempt 1, falling back to Ollama
+INFO: LLM analysis generated using ollama (qwen2.5:7b) in 4560ms (fallback: True)
 ```
 
 ### Health check endpoint
@@ -247,12 +242,12 @@ watch -n 5 'curl -s http://localhost:8000/health/llm | jq'
 ### Métricas importantes
 
 1. **Latencia promedio**:
-   - Claude: 1-2 segundos
-   - Ollama: 0.3-0.8 segundos
+   - OpenAI gpt-4o-mini: 3-15 segundos para un análisis de ~800 tokens
+   - Ollama: depende del hardware local
 
 2. **Tasa de fallback**:
-   - Óptimo: <5% (la mayoría usa Claude)
-   - Advertencia: >20% (problemas con Claude API)
+   - Óptimo: <5% (la mayoría usa OpenAI)
+   - Advertencia: >20% (problemas con la API de OpenAI)
    - Crítico: >80% (verificar API key / cuota)
 
 3. **Circuit breaker state**:
@@ -262,29 +257,28 @@ watch -n 5 'curl -s http://localhost:8000/health/llm | jq'
 
 ## 🐛 Troubleshooting
 
-### Claude no funciona
+### OpenAI no funciona
 
 **Síntoma**: Todos los análisis usan Ollama (fallback)
 
 **Diagnóstico**:
 ```bash
-# Verificar API key
-curl https://api.anthropic.com/v1/messages \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "content-type: application/json" \
+# Verificar API key directamente
+curl https://api.openai.com/v1/chat/completions \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-sonnet-4-5-20250514",
-    "max_tokens": 10,
+    "model": "gpt-4o-mini",
+    "max_completion_tokens": 10,
     "messages": [{"role": "user", "content": "Hi"}]
   }'
 ```
 
 **Soluciones**:
-1. Verificar `ANTHROPIC_API_KEY` en `.env`
-2. Revisar cuota en https://console.anthropic.com/settings/billing
-3. Verificar que la key no esté expirada
-4. Revisar logs: `tail -f api/logs/app.log | grep -i anthropic`
+1. Verificar `OPENAI_API_KEY` en `api/.env`
+2. Revisar cuota/billing en https://platform.openai.com/settings/organization/billing
+3. Verificar que la key no esté revocada
+4. Revisar los logs de la API (busca "OpenAI" en la salida de `main.py`)
 
 ### Ollama no responde
 
@@ -305,15 +299,14 @@ ollama list | grep qwen
 3. Cambiar `OLLAMA_URL` si Ollama está en otro puerto
 4. Verificar logs: `journalctl -u ollama -f` (Linux)
 
-### Rate limit de Claude
+### Rate limit de OpenAI
 
 **Síntoma**: Logs muestran `RateLimitError` frecuente
 
 **Soluciones**:
 1. Reducir frecuencia de requests
 2. Aumentar tiempo de cache en Redis (default: 1 hora)
-3. Usar modelo más barato: `claude-3-5-haiku-20241022`
-4. Aumentar cuota en Anthropic Console
+3. Revisar tu tier de rate limits en https://platform.openai.com/settings/organization/limits
 
 ### Circuit breaker abierto
 
@@ -321,25 +314,26 @@ ollama list | grep qwen
 
 **Solución**:
 ```bash
-# Esperar timeout (60s para Claude, 30s para Ollama)
-# O reiniciar API
-systemctl restart mma-api
+# Esperar timeout (60s para OpenAI, 30s para Ollama)
+# O reiniciar la API
 ```
 
 ## 📈 Optimizaciones para Uso Personal
 
-### Reducir costos de Claude (~$1-3/mes actual)
+### Costos de OpenAI (gpt-4o-mini)
 
-1. **Usar Haiku si haces muchos análisis**:
+Un análisis típico (~320 tokens de prompt + 800 de salida) cuesta **≈ $0.0005**, es decir ~$0.60 por cada 1,000 predicciones. Para un hobby es prácticamente gratis.
+
+1. **Si quieres aún más barato** (calidad de redacción algo menor):
 ```bash
 # En .env
-CLAUDE_MODEL=claude-3-5-haiku-20241022  # ~10x más barato
+OPENAI_MODEL=gpt-4.1-nano
 ```
 
-2. **Usar Ollama por defecto** (gratis):
+2. **Usar Ollama por defecto** (gratis, 100% local):
 ```bash
 # En .env, comenta la API key para forzar Ollama
-# ANTHROPIC_API_KEY=...
+# OPENAI_API_KEY=...
 ```
 
 ### Mejorar velocidad
@@ -352,8 +346,8 @@ nvidia-smi  # Verificar GPU
 
 2. **Cache en Redis más largo**:
 ```bash
-# Análisis se cachean 1 hora por defecto
-# Puedes aumentar en api/main.py línea 160:
+# Las predicciones se cachean 1 hora por defecto
+# Puedes aumentar el TTL en api/main.py:
 redis_client.setex(cache_key, 86400, ...)  # 24 horas
 ```
 
@@ -362,13 +356,13 @@ redis_client.setex(cache_key, 86400, ...)  # 24 horas
 Si quieres verificar que todo funciona correctamente:
 
 ```bash
-cd /home/saidsimon2/mma-predictor
+# Desde la raíz del proyecto
 
 # Todos los tests (con mocks, no usa API real)
 pytest tests/test_llm_client.py -v
 
 # Tests específicos
-pytest tests/test_llm_client.py::test_claude_success -v
+pytest tests/test_llm_client.py::test_openai_success -v
 pytest tests/test_llm_client.py::test_ollama_success -v
 ```
 
@@ -418,15 +412,12 @@ import asyncio
 from llm_client import LLMClient, LLMProvider
 
 async def compare_providers():
-    llm = LLMClient(anthropic_api_key="sk-ant-...")
+    llm = LLMClient(openai_api_key="sk-proj-...")
 
     prompt = "Analiza Jon Jones vs Stipe Miocic en 2 párrafos"
 
-    # Claude
-    claude_response = await llm.generate(
-        prompt=prompt,
-        force_provider=LLMProvider.CLAUDE
-    )
+    # OpenAI (proveedor por defecto)
+    openai_response = await llm.generate(prompt=prompt)
 
     # Ollama
     ollama_response = await llm.generate(
@@ -434,9 +425,9 @@ async def compare_providers():
         force_provider=LLMProvider.OLLAMA
     )
 
-    print(f"Claude latency: {claude_response.latency_ms}ms")
+    print(f"OpenAI latency: {openai_response.latency_ms}ms")
     print(f"Ollama latency: {ollama_response.latency_ms}ms")
-    print(f"\nCalidad Claude (subjetiva): ⭐⭐⭐⭐⭐")
+    print(f"\nCalidad OpenAI (subjetiva): ⭐⭐⭐⭐")
     print(f"Calidad Ollama (subjetiva): ⭐⭐⭐")
 
 asyncio.run(compare_providers())
@@ -486,11 +477,10 @@ Tu `.env` ya está en `.gitignore`, pero por si acaso:
 cat .gitignore | grep .env
 
 # Debería mostrar:
-# api/.env
 # .env
 ```
 
-**Importante**: Si compartes el proyecto, NO compartas tu `.env` con la API key.
+**Importante**: Si compartes el proyecto, NO compartas tu `.env` con la API key. Si una key se expone (chat, pantalla compartida, commit accidental), rótala en https://platform.openai.com/api-keys.
 
 ## 🚀 Inicio Rápido (Resumen)
 
@@ -498,11 +488,11 @@ cat .gitignore | grep .env
 # Terminal 1
 redis-server
 
-# Terminal 2
+# Terminal 2 (opcional, fallback)
 ollama serve
 
 # Terminal 3
-cd /home/saidsimon2/mma-predictor/api
+cd api
 python main.py
 
 # Terminal 4 (verificar)
@@ -511,10 +501,10 @@ curl http://localhost:8000/health/llm | jq
 
 ## 📞 Referencias
 
-- **Documentación Anthropic**: https://docs.anthropic.com/
+- **Documentación OpenAI**: https://platform.openai.com/docs
 - **Documentación Ollama**: https://github.com/ollama/ollama
 
 ---
 
-**Última actualización**: 2025-10-06
-**Versión**: 1.0.0 (Uso Personal)
+**Última actualización**: 2026-06-09 (migración Claude → OpenAI gpt-4o-mini)
+**Versión**: 2.0.0 (Uso Personal)

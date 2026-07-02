@@ -1,6 +1,6 @@
 # MMA Fight Predictor - Sistema de Predicción con ML + IA
 
-Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBoost) con análisis cualitativo mediante LLM(claude | local con qwen ). El modelo utiliza 16 features técnicas para calcular probabilidades de victoria, mientras que un sistema de IA dual (Claude API con fallback a Ollama local) genera análisis explicativos detallados. La arquitectura incluye cache inteligente con Redis, scraping automático de datos, y una interfaz web moderna para visualización de predicciones en tiempo real.
+Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBoost) con análisis cualitativo mediante LLM (OpenAI | local con qwen). El modelo utiliza 16 features técnicas para calcular probabilidades de victoria, mientras que un sistema de IA dual (OpenAI API con fallback a Ollama local) genera análisis explicativos detallados. La arquitectura incluye cache inteligente con Redis, scraping automático de datos, y una interfaz web moderna para visualización de predicciones en tiempo real.
 
 ---
 
@@ -55,7 +55,7 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐    │
 │  │  async def generate():                                      │    │
-│  │    1. ¿Claude disponible? → Intentar Claude API             │    │
+│  │    1. ¿OpenAI disponible? → Intentar OpenAI API             │    │
 │  │    2. Si falla/timeout → Fallback automático a Ollama       │    │
 │  │    3. Reintentos exponenciales (1s, 2s, 4s)                 │    │
 │  │    4. Circuit breaker para proteger servicios               │    │
@@ -65,10 +65,10 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 │          │                           │                              │
 │          ▼                           ▼                              │
 │  ┌───────────────┐          ┌────────────────────┐                  │
-│  │ Claude API    │          │ Ollama Local       │                  │
+│  │ OpenAI API    │          │ Ollama Local       │                  │
 │  │ (Primario)    │  FALLA   │ (Fallback)         │                  │
 │  │               │  ───→    │                    │                  │
-│  │ Sonnet 4.5    │          │ Qwen2.5:7b         │                  │
+│  │ gpt-4o-mini   │          │ Qwen2.5:7b         │                  │
 │  │ Timeout: 30s  │          │ Timeout: 180s      │                  │
 │  │ Externo/Rápido│          │ Local/Lento        │                  │
 │  └───────────────┘          └────────────────────┘                  │
@@ -115,8 +115,8 @@ Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBo
 1. **Frontend (mma_frontend.html)** - Interfaz web con búsqueda de peleadores, gráficos interactivos y visualización de predicciones en tiempo real
 2. **API FastAPI (api/main.py)** - Servidor backend que orquesta validación, cálculo de features, predicción ML y generación de análisis LLM
 3. **Modelo XGBoost (mma_prediction_model.pkl)** - Clasificador binario que procesa 16 features y genera probabilidades de victoria (único componente que afecta los %)
-4. **LLM Client (api/llm_client.py)** - Orquestador que intenta Claude API primero y hace fallback automático a Ollama si falla
-5. **Claude API (Anthropic)** - Servicio externo de IA para análisis rápido (30s timeout), usado como proveedor primario
+4. **LLM Client (api/llm_client.py)** - Orquestador que intenta OpenAI API primero y hace fallback automático a Ollama si falla
+5. **OpenAI API (gpt-4o-mini)** - Servicio externo de IA para análisis rápido (30s timeout), usado como proveedor primario
 6. **Ollama Local (Qwen2.5:7b)** - Modelo LLM local como fallback, más lento (180s timeout) pero siempre disponible
 7. **Redis Cache** - Almacenamiento en memoria para cachear predicciones por 1 hora y evitar recálculos innecesarios
 8. **PostgreSQL (Opcional)** - Base de datos relacional para almacenamiento persistente de peleas y resultados históricos

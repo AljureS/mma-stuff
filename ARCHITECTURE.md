@@ -1,6 +1,6 @@
 # MMA Fight Predictor - Arquitectura
 
-Sistema de predicción de peleas MMA que usa Machine Learning (XGBoost con 16 features) para calcular probabilidades de victoria, y LLMs (Claude/Ollama) para generar análisis cualitativos. El usuario selecciona dos peleadores en el frontend, la API procesa sus estadísticas, el modelo ML predice el ganador, y opcionalmente un LLM explica el porqué.
+Sistema de predicción de peleas MMA que usa Machine Learning (XGBoost con 16 features) para calcular probabilidades de victoria, y LLMs (OpenAI/Ollama) para generar análisis cualitativos. El usuario selecciona dos peleadores en el frontend, la API procesa sus estadísticas, el modelo ML predice el ganador, y opcionalmente un LLM explica el porqué.
 
 ---
 
@@ -36,8 +36,8 @@ Sistema de predicción de peleas MMA que usa Machine Learning (XGBoost con 16 fe
 │                                           ┌───────────────┼───────────────┐│
 │                                           ▼               ▼               ││
 │                                    ┌───────────┐   ┌─────────────┐        ││
-│                                    │  Claude   │   │   Ollama    │        ││
-│                                    │ Sonnet4.5 │   │ Qwen2.5:7b  │        ││
+│                                    │  OpenAI   │   │   Ollama    │        ││
+│                                    │gpt-4o-mini│   │ Qwen2.5:7b  │        ││
 │                                    │   (1ro)   │   │ (fallback)  │        ││
 │                                    └───────────┘   └─────────────┘        ││
 │                                                                           ││
@@ -65,7 +65,7 @@ mma-stuff/
 ├── api/                          # BACKEND
 │   ├── main.py                   # Servidor FastAPI - endpoints
 │   ├── ml_system.py              # Motor ML - XGBoost + 16 features
-│   ├── llm_client.py             # Cliente LLM - Claude → Ollama fallback
+│   ├── llm_client.py             # Cliente LLM - OpenAI → Ollama fallback
 │   └── .env                      # Variables de entorno (API keys, config)
 │
 ├── scripts/                      # UTILIDADES
@@ -108,7 +108,7 @@ mma-stuff/
 
 ## Stack Tecnológico
 
-**Backend:** FastAPI + XGBoost + Anthropic SDK + aiohttp
+**Backend:** FastAPI + XGBoost + OpenAI SDK + aiohttp
 **Frontend:** HTML5 + TailwindCSS + Chart.js
 **DB:** PostgreSQL + Redis (cache)
-**LLM:** Claude Sonnet 4.5 (primario) → Ollama Qwen2.5:7b (fallback)
+**LLM:** OpenAI gpt-4o-mini (primario) → Ollama Qwen2.5:7b (fallback)
