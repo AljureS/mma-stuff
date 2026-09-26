@@ -13,63 +13,63 @@ Sistema de predicción de peleas de MMA: una API FastAPI que compara las estadí
 
 ## Estado Actual (leer antes de tocar código)
 
-Es un proyecto en **fase de desarrollo/prototipo**. Lo que funciona de verdad y lo que no:
+Proyecto en **fase de desarrollo/prototipo**, tras el **refactor de limpieza 2026-07-01** (ver `tasks/todo.md`): se eliminaron ~1,600 LOC de código muerto/placeholder (ml_system.py, deployment_setup.sh, database_schema.sql, endpoints falsos, 8 dependencias sin uso) y se corrigieron los bugs de cache key y del buscador.
 
 **Implementado y funcional:**
-- API FastAPI completa (`api/main.py`) con cache Redis y validación Pydantic
+- API FastAPI (`api/main.py`, 590 LOC) con cache Redis (key normalizada) y validación Pydantic — 5 endpoints, todos reales
 - Cliente LLM con fallback OpenAI → Ollama, reintentos, circuit breakers (`api/llm_client.py`) + 15 tests unitarios
 - Scraping automático de UFCStats cuando un peleador no existe en el CSV o sus datos tienen >7 días (`get_fighter_data` en `main.py` → `MMADataCollector.search_and_scrape_fighter`)
-- Frontend HTML/JS/Tailwind que consume la API
+- Frontend HTML/JS/Tailwind que consume la API (rediseño Fight Night 2026-07)
 
-**Placeholder / simulado (NO funcional en producción):**
+**Placeholder / simulado (lo que queda):**
 - **El modelo ML actual es dummy**: `models/mma_prediction_model.pkl` fue generado por `scripts/setup_dev_data.py` entrenando XGBoost (`n_estimators=100`) sobre **datos aleatorios**. Las probabilidades que devuelve `/predict` no tienen valor predictivo real.
-- `GET /events/upcoming`: eventos hardcodeados (UFC 300 ficticio)
-- `GET /analytics/model-performance` y `GET /analytics/betting-roi`: números hardcodeados
-- `POST /retrain`: el background task existe pero todo su cuerpo está comentado (no-op)
-- `get_betting_insights()`: odds hardcodeadas (-120/+100), no llama a ninguna API real
-- `get_recent_form()` y `get_current_ranking()`: retornan valores fijos de ejemplo
-- **PostgreSQL no se usa**: existe `database_schema.sql` (tablas fighters/fights/predictions + seed data) y `psycopg2` en requirements, pero la API lee/escribe exclusivamente el CSV `data/fighters_complete.csv`
-- `api/ml_system.py` (`MMAPredictor`): módulo de entrenamiento standalone con las 16 features "ideales"; **no es importado por `main.py`** y sus fuentes de datos están simuladas
+- `main.py` calcula solo 10 features reales y rellena con ceros hasta 16 (ver sección Features). **El padding NO es borrable**: el pkl espera exactamente 16 inputs.
 
-**Bugs conocidos:**
-- La cache key de Redis `prediction:{fighter_a}:{fighter_b}` no normaliza nombres ni orden: "A vs B" y "B vs A" generan entradas distintas
-- `main.py` calcula solo 10 features reales y rellena con ceros hasta 16 (ver sección Features)
+**Issues conocidos:**
+- El scraper de UFCStats devuelve 0 filas (detectado 2026-07-01: el HTML del sitio cambió o bloquea requests). El fallback a datos stale del CSV funciona por diseño, así que la API opera normal; arreglar el parser es pendiente.
+- Redis (`localhost:6379`) y uvicorn (`0.0.0.0:8000`) siguen hardcodeados (no leen el .env).
+
+**Eliminado en el refactor 2026-07-01** (recuperable vía git si algún día se implementa de verdad): `api/ml_system.py`, `database_schema.sql`, `scripts/deployment_setup.sh`, `POST /retrain` (no-op), `GET /events/upcoming` (hardcodeado), `GET /analytics/*` ×2 (hardcodeados), `get_betting_insights()` (odds falsas), `get_recent_form()`/`get_current_ranking()` (valores inventados), deps psycopg2/structlog/python-jose/passlib/selenium/webdriver-manager/lxml/python-multipart, y el JS inline duplicado del frontend.
 
 ## Estructura Real del Proyecto
 
 ```
 mma-stuff/
 ├── CLAUDE.md                      # Este archivo (fuente de verdad)
-├── README.md                      # Readme general
-├── ARCHITECTURE.md                # Notas de arquitectura
-├── IMPLEMENTATION_SUMMARY.md      # Resumen de implementación LLM
+├── .claude/
+│   ├── agents/                    # Subagentes del refactor: slop-auditor, backend-refactorer,
+│   │                              #   mma-ui-builder, stack-verifier (ver "Tooling de Refactor")
+│   └── skills/                    # Skills: mma-run-stack, slop-audit, mma-ui-theme,
+│                                  #   refactor-verify, sync-claude-md
+├── tasks/
+│   ├── todo.md                    # Plan maestro del refactor 2026-07 (checkable) + inventario de slop
+│   ├── lessons.md                 # Correcciones del usuario y reglas aprendidas
+│   └── baselines/                 # Respuestas de referencia pre-refactor (gitignored)
+├── README.md                      # Entry point conciso (reescrito 2026-07-01)
 ├── README_LLM.md                  # Doc del sistema LLM
-├── database_schema.sql            # Schema PostgreSQL (NO usado por la API)
 ├── test_scraping.py               # Script manual de prueba del scraper
 ├── api/
-│   ├── main.py                    # Servidor FastAPI (toda la API + feature engineering)
+│   ├── main.py                    # Servidor FastAPI (toda la API + feature engineering, 590 LOC)
 │   ├── llm_client.py              # Cliente LLM con fallback OpenAI → Ollama
-│   ├── ml_system.py               # MMAPredictor standalone (entrenamiento, NO usado por la API)
-│   ├── requirements.txt           # Dependencias Python
+│   ├── requirements.txt           # 16 dependencias Python (podado 2026-07-01)
 │   └── .env                       # Variables de entorno (gitignored, NO commitear)
 ├── scripts/
-│   ├── data_collection.py         # MMADataCollector (scraping UFCStats/Sherdog/Tapology)
-│   ├── setup_dev_data.py          # Genera modelo dummy + CSV con 20 peleadores seed
-│   └── deployment_setup.sh        # Setup de deployment (solo Linux)
+│   ├── data_collection.py         # MMADataCollector (scraping UFCStats, 259 LOC tras poda)
+│   └── setup_dev_data.py          # Genera modelo dummy + CSV con 20 peleadores seed
 ├── data/
 │   └── fighters_complete.csv      # Base de datos de peleadores (~37 filas, crece con scraping)
 ├── models/
 │   └── mma_prediction_model.pkl   # Modelo XGBoost (actualmente dummy)
 ├── frontend/
-│   ├── index.html                 # UI (Tailwind CDN, Chart.js CDN, Font Awesome CDN)
+│   ├── index.html                 # UI Fight Night (Tailwind CDN, Chart.js CDN, Font Awesome CDN)
 │   ├── index.js                   # Lógica del cliente (API_BASE_URL = http://localhost:8000)
-│   └── styles.css                 # Estilos custom
+│   └── styles.css                 # Estilos custom del tema
 └── tests/
     ├── __init__.py
     └── test_llm_client.py         # 15 tests del cliente LLM (pytest + pytest-asyncio)
 ```
 
-No existen `data/fight_history.csv` ni `data/training_data.csv` (mencionados en versiones anteriores de esta doc).
+Borrados en el refactor 2026-07-01: `ARCHITECTURE.md`, `IMPLEMENTATION_SUMMARY.md`, `database_schema.sql`, `api/ml_system.py`, `scripts/deployment_setup.sh`, `dump.rdb`. No existen `data/fight_history.csv` ni `data/training_data.csv` (mencionados en versiones antiguas de esta doc).
 
 ## Componente 1: API Backend (`api/main.py`)
 
@@ -79,23 +79,22 @@ No existen `data/fight_history.csv` ni `data/training_data.csv` (mencionados en 
 |---|---|---|
 | `GET /` | Real | Health check: estado, modelo cargado, conteo de peleadores |
 | `POST /predict` | Real (modelo dummy) | Predicción de pelea con cache, features y análisis LLM |
-| `GET /fighter/{name}` | Parcial | Stats reales del CSV; `recent_form` y `ranking` son placeholders |
-| `GET /search/fighters/{query}` | Real | Búsqueda fuzzy (`str.contains`, case-insensitive) sobre el CSV, `limit` default 10 |
-| `GET /events/upcoming` | Placeholder | Eventos hardcodeados; sí ejecuta predicciones reales sobre ellos (sin LLM) |
-| `POST /retrain` | No-op | Lanza background task cuyo cuerpo está completamente comentado |
-| `GET /analytics/model-performance` | Placeholder | Métricas hardcodeadas |
-| `GET /analytics/betting-roi` | Placeholder | ROI hardcodeado |
+| `GET /fighter/{name}` | Real | Stats del CSV (NaN→None); `ranking` sale de la columna `ranking` del CSV (null si falta); ya no existe `recent_form` |
+| `GET /search/fighters/{query}` | Real | Búsqueda fuzzy (`str.contains`, case-insensitive) sobre el CSV, `limit` default 10. Fix 2026-07-01: sanitiza NaN (antes devolvía 500) |
 | `GET /health/llm` | Real | Estado de proveedores LLM y circuit breakers |
+
+Eliminados 2026-07-01 (devuelven 404): `POST /retrain`, `GET /events/upcoming`, `GET /analytics/model-performance`, `GET /analytics/betting-roi`.
 
 ### Flujo de `/predict`
 
-1. Verificar cache Redis (`prediction:{fighter_a}:{fighter_b}`, TTL 3600s). Hit → retorno inmediato.
+1. Verificar cache Redis con **key normalizada** `prediction:{min}:{max}` (nombres `strip().lower()` ordenados; TTL 3600s). Hit → si el orden de peleadores del request difiere del cacheado, `_swap_cached_prediction()` intercambia nombres/probabilidades y **niega los `key_factors`** (son diferencias a−b) antes de responder.
 2. `get_fighter_data()` para cada peleador (ver "Datos de peleadores" abajo). Si alguno no se encuentra ni se puede scrapear → 404 con nombres faltantes.
 3. `engineer_fight_features()` genera el vector de 16 posiciones.
 4. `prediction_model.predict_proba([features])` — **convención: `probabilities[1]` = probabilidad de que gane fighter_a**.
 5. Si `include_llm_analysis=true` (default): análisis LLM en español (max_tokens=800, temperature=0.7, prompt limita a ~700 palabras).
-6. `get_betting_insights()` (hardcodeado) — las odds NO son input del modelo, solo comparación post-predicción.
-7. Respuesta `FightPredictionResponse` + cache en Redis por 1 hora.
+6. Respuesta `FightPredictionResponse` (sin `betting_insights` desde 2026-07-01) + cache en Redis por 1 hora.
+
+Helpers de sanitización: `_nan_to_none()` y `_sanitize_csv_record()` (main.py) — aplicar a TODA respuesta construida desde filas del CSV (tiene NaN).
 
 ### Datos de peleadores con auto-scraping (`get_fighter_data`)
 
@@ -120,7 +119,7 @@ No existen `data/fight_history.csv` ni `data/training_data.csv` (mencionados en 
 10. `title_fight` (1.0 / 0.0)
 11–16. **Relleno con ceros** hasta completar 16 posiciones
 
-`safe_get()` maneja None/NaN/no-convertibles con los defaults indicados. Las 16 features "completas" (con scores compuestos, forma reciente, calidad de oponentes, style matchup) solo existen en `ml_system.py`, que no está conectado a la API. Cerrar esa brecha es trabajo pendiente.
+`safe_get()` maneja None/NaN/no-convertibles con los defaults indicados. Las 16 features "completas" (con scores compuestos, forma reciente, calidad de oponentes, style matchup) están documentadas al final de "Componente 3" — implementarlas en la API es trabajo pendiente (junto con entrenar el modelo real).
 
 `get_key_factors()` reporta los 5 factores con |valor| > 0.1 de las primeras 10 features.
 
@@ -161,35 +160,31 @@ FastAPI → LLMClient (singleton, get_llm_client())
 
 **Costo (precios junio 2026):** gpt-4o-mini cuesta $0.15/1M tokens input y $0.60/1M output → un análisis típico (~320 in + 800 out) cuesta ≈ $0.0005, o ~$0.60 por cada 1,000 predicciones. Cambiar de modelo es editar `OPENAI_MODEL` en el .env.
 
-## Componente 3: Sistema de Entrenamiento (`api/ml_system.py`) — STANDALONE
+## Componente 3: Recolección de Datos (`scripts/data_collection.py`)
 
-Clase `MMAPredictor`. **No es usado por la API**; es el diseño objetivo del modelo y sirve para entrenar. Sus fuentes de datos (`_get_ufc_stats`, `_get_betting_odds`, `_get_social_sentiment`) retornan datos simulados, y su `main()` entrena con datos aleatorios.
+Clase `MMADataCollector` (requests + BeautifulSoup, 259 LOC tras la poda 2026-07-01). Cadena de producción:
 
-**Las 16 features objetivo** (`feature_columns`): `height_diff`, `reach_diff`, `age_diff`, `experience_diff`, `win_rate_diff`, `finish_rate_diff`, `takedown_acc_diff`, `takedown_def_diff`, `sig_str_acc_diff`, `sig_str_def_diff`, `cardio_score_diff`, `power_score_diff`, `grappling_score_diff`, `recent_form_diff`, `opponent_quality_diff`, `style_matchup_score`.
+- `search_and_scrape_fighter(name)` — **el método que usa la API** (vía `get_fighter_data` en main.py, importado con hack de `sys.path`). Busca en UFCStats por la inicial del apellido (`?char=X&page=all`), match fuzzy case-insensitive, parsea altura/peso/alcance/stance/récord, y llama internamente a `get_fighter_detailed_stats`. Infiere `weight_class` por peso en libras. Defaults si faltan stats: striking_accuracy 50, striking_defense 55, takedown_accuracy 40, takedown_defense 70, age 30.
+- `get_fighter_detailed_stats(profile_url)` — stats del perfil (striking/takedown accuracy/defense vía `_normalize_stat_name`/`_parse_stat_value`) + fight history. **Es producción, NO borrar** (un audit lo marcó muerto por error; la llamada está dentro de `search_and_scrape_fighter`).
+- Parsers: `_parse_height`, `_parse_weight`, `_parse_reach`, `_infer_weight_class`.
 
-**Hiperparámetros de `train_model()`:** XGBClassifier con `n_estimators=1000`, `learning_rate=0.01`, `max_depth=6`, `subsample=0.8`, `colsample_bytree=0.8`, split 80/20, early stopping 50 rounds, métricas accuracy/log loss + feature importance.
+Eliminados 2026-07-01 (solo eran alcanzables desde un `main()` que nunca corría, o desde nadie): `scrape_ufc_stats`, `scrape_sherdog_rankings`, `scrape_tapology_events`, `get_betting_odds_historical`, `get_social_sentiment` + helpers Reddit/Twitter, `save_data`, `main()`, imports de selenium/pandas/time/json.
 
-Las odds de apuestas y el sentiment social se recopilan en `load_fighter_data()` pero **no están en `feature_columns`** — no son input del modelo, solo contexto/comparación.
-
-## Componente 4: Recolección de Datos (`scripts/data_collection.py`)
-
-Clase `MMADataCollector` (requests + BeautifulSoup; selenium está en requirements e importado pero **sin uso real** en el código).
-
-- `search_and_scrape_fighter(name)` — **el método que usa la API**. Busca en UFCStats por la inicial del apellido (`?char=X&page=all`), match fuzzy case-insensitive, parsea altura/peso/alcance/stance/récord, baja stats detalladas del perfil (striking/takedown accuracy/defense, historial de peleas), infiere `weight_class` por peso en libras. Defaults si faltan stats: striking_accuracy 50, striking_defense 55, takedown_accuracy 40, takedown_defense 70, age 30.
-- `scrape_ufc_stats(max_fighters)` — scraping masivo de listados (páginas 1–49), rate limit 1s.
-- `get_fighter_detailed_stats(profile_url)` — stats del perfil + fight history.
-- `scrape_sherdog_rankings()` — top 15 por división.
-- `scrape_tapology_events()` — eventos futuros.
-- `get_betting_odds_historical()` — The Odds API, requiere API key (placeholder `YOUR_API_KEY`).
-- `get_social_sentiment()` / Reddit / Twitter — placeholders con valores fijos.
+**Issue conocido:** el scraping devuelve 0 filas desde ~2026-07 (UFCStats cambió HTML o bloquea). La API degrada a datos stale del CSV sin romperse.
 
 Prueba manual del scraper: `python test_scraping.py` (busca a Mateusz Gamrot).
 
-## Componente 5: Frontend (`frontend/`)
+**Las 16 features objetivo del modelo real** (heredadas del borrado `ml_system.py`, para cuando se entrene en serio): `height_diff`, `reach_diff`, `age_diff`, `experience_diff`, `win_rate_diff`, `finish_rate_diff`, `takedown_acc_diff`, `takedown_def_diff`, `sig_str_acc_diff`, `sig_str_def_diff`, `cardio_score_diff`, `power_score_diff`, `grappling_score_diff`, `recent_form_diff`, `opponent_quality_diff`, `style_matchup_score`. Hiperparámetros de referencia: XGBClassifier `n_estimators=1000`, `learning_rate=0.01`, `max_depth=6`, `subsample=0.8`, `colsample_bytree=0.8`, split 80/20, early stopping 50.
 
-- `index.html`: UI con TailwindCSS (CDN), Chart.js (CDN), Font Awesome 6 (CDN). Referencia `styles.css` e `index.js` (rutas corregidas 2026-06-10).
-- `index.js`: `API_BASE_URL = 'http://localhost:8000'`. Búsqueda de peleadores con debounce de 500ms, predicción vía `POST /predict` (siempre con `include_llm_analysis: true`), gráfico doughnut de probabilidades, factores clave, análisis LLM, betting insights, y carga de `/events/upcoming` al iniciar.
-- `styles.css`: estilos custom mínimos.
+## Componente 4: Frontend (`frontend/`)
+
+UI rediseñada 2026-07-01 con el design system **Fight Night** (ver skill `mma-ui-theme`: tokens arena/corner/gold/canvas, Barlow Condensed + Inter por Google Fonts, corners rojo/azul, oro solo para title fight).
+
+- `index.html` (258 LOC): header cartelera, matchup con corner rojo | VS | corner azul, opciones (peso/evento/checkbox title fight con badge dorado), `resultsSection` (banner de ganador con glow de corner, chart, key factors, análisis de esquina), `loadingModal` con octágono girando. Config de Tailwind inline con los tokens. **El bloque JS inline duplicado fue eliminado** — `index.js` es la única fuente (antes el inline era la copia viva: el externo moría en parse por redeclarar `API_BASE_URL`).
+- `index.js` (271 LOC): `API_BASE_URL = 'http://localhost:8000'`. Consume SOLO `POST /predict` (siempre `include_llm_analysis: true`) y `GET /search/fighters/` (debounce 500ms). Doughnut con colores de corner, key factors con iconos y color según a quién favorecen (signo del diff, ver skill), banner de ganador (`winnerBanner`/`titleBeltNote` — title fight se toma del request, no viene en la respuesta). Patrón destroy-antes-de-recrear del chart.
+- `styles.css` (192 LOC): componentes custom del tema — spinner octágono (clip-path + conic-gradient), glows de ganador por corner/oro, clases dinámicas que el JS aplica (`.winner-*`, `.factor-*`; van aquí y no como utilidades Tailwind por el CDN).
+
+Los IDs del DOM son contrato con `index.js` — la lista completa vive en la skill `mma-ui-theme` (reglas de compatibilidad).
 
 ## Datos
 
@@ -198,11 +193,9 @@ Prueba manual del scraper: `python test_scraping.py` (busca a Mateusz Gamrot).
 
 Las últimas 4 columnas las agrega el scraper. Alturas/alcances en cm, peso en lbs. Se siembra con 20 peleadores vía `setup_dev_data.py` y crece automáticamente con el auto-scraping (~37 filas actualmente). **La API escribe en este archivo en runtime** (por eso aparece modificado en git).
 
-**`models/mma_prediction_model.pkl`** — XGBoost serializado con pickle. El actual es dummy (ver Estado Actual). Para regenerarlo: `python scripts/setup_dev_data.py` desde la raíz del proyecto.
+**`models/mma_prediction_model.pkl`** — XGBoost serializado con pickle. El actual es dummy (ver Estado Actual). Para regenerarlo: `python scripts/setup_dev_data.py` desde la raíz del proyecto. OJO: cargar el pkl requiere `scikit-learn` instalado (es un XGBClassifier con wrapper sklearn) — esa dependencia NO es borrable aunque nada la importe directamente.
 
-**`database_schema.sql`** — schema PostgreSQL con seed data. No conectado a nada todavía.
-
-**`dump.rdb`** — dump de Redis generado en runtime; no es código fuente (candidato a .gitignore).
+**`tasks/baselines/`** — respuestas de referencia capturadas antes del refactor (predict = 0.7760478854179382 para Jon Jones vs Stipe Miocic sin LLM). Gitignored; usadas por la skill `refactor-verify` para checks de paridad.
 
 ## Variables de Entorno (`api/.env`, gitignored)
 
@@ -246,7 +239,7 @@ curl http://localhost:8000/health/llm  # estado LLM
 #    p. ej.: python -m http.server 3000 --directory frontend
 ```
 
-Deployment Linux: `scripts/deployment_setup.sh` (verifica SO, permisos, espacio en disco; configura el stack completo).
+(El script de deployment Linux `deployment_setup.sh` se eliminó 2026-07-01: configuraba PostgreSQL/Nginx/Systemd que el código no usa.)
 
 ## Tests
 
@@ -255,22 +248,21 @@ pytest tests/test_llm_client.py -v   # 15 tests: circuit breaker, fallback, rein
 python test_scraping.py              # prueba manual del scraper contra UFCStats (red real)
 ```
 
-Los tests del LLM mockean OpenAI y aiohttp (pytest-asyncio + pytest-mock). No hay tests para `main.py` ni `ml_system.py`.
+Los tests del LLM mockean OpenAI y aiohttp (pytest-asyncio + pytest-mock). No hay tests para `main.py` ni para el scraper — su única verificación es ejecución real (ver skill `refactor-verify`).
 
 ## Stack Tecnológico
 
-- **Backend:** Python, FastAPI 0.104, uvicorn, Pydantic 2.5, pandas, numpy, XGBoost 1.7, scikit-learn, redis-py, aiohttp, requests + BeautifulSoup4, openai 2.41, python-dotenv
+- **Backend:** Python, FastAPI 0.104, uvicorn, Pydantic 2.5, pandas, numpy, XGBoost 1.7, scikit-learn (requerida para deserializar el pkl), redis-py, aiohttp, requests + BeautifulSoup4, openai 2.41, python-dotenv — 16 deps totales (podadas de 24 el 2026-07-01)
 - **Frontend:** HTML/JS vanilla + TailwindCSS, Chart.js y Font Awesome por CDN
-- **Infra activa:** Redis (cache). **Infra declarada pero no conectada:** PostgreSQL, Nginx, Docker, Supervisor
+- **Infra activa:** Redis (cache). Toda la infra declarada-pero-no-conectada (PostgreSQL, Nginx, Docker, Supervisor) se eliminó en el refactor 2026-07-01.
 - **LLM:** OpenAI gpt-4o-mini (primario) + Ollama Qwen2.5:7b (fallback local)
 
 ## Trabajo Pendiente Prioritario
 
-1. **Entrenar un modelo real**: el pkl actual es dummy. Requiere construir un dataset de peleas históricas (no existe `training_data.csv`) y conectar el pipeline de `ml_system.py` con datos reales.
-2. **Cerrar la brecha de features**: `main.py` calcula 10 de 16 features; implementar los scores compuestos, forma reciente, calidad de oponentes y style matchup de `ml_system.py` en el flujo de la API.
-3. Normalizar la cache key de Redis (orden y casing de nombres).
-4. Conectar PostgreSQL o eliminar la dependencia declarada.
-5. Implementar de verdad `/retrain`, betting insights, recent form y rankings.
+1. **Entrenar un modelo real**: el pkl actual es dummy. Requiere construir un dataset de peleas históricas (no existe `training_data.csv`). Las 16 features objetivo e hiperparámetros de referencia están documentados al final de "Componente 3".
+2. **Cerrar la brecha de features**: `main.py` calcula 10 de 16 features; implementar los scores compuestos, forma reciente, calidad de oponentes y style matchup en el flujo de la API (junto con el punto 1).
+3. **Arreglar el parser del scraper**: UFCStats devuelve 0 filas desde ~2026-07 (cambio de HTML o bloqueo); hoy la API vive de los datos stale del CSV.
+4. Parametrizar Redis y uvicorn por variables de entorno (hoy hardcodeados).
 
 ## Workflow Orchestration (cómo trabajar en este proyecto)
 
@@ -318,13 +310,38 @@ Los tests del LLM mockean OpenAI y aiohttp (pytest-asyncio + pytest-mock). No ha
 - **Documentar resultados:** agrega una sección de review a `tasks/todo.md`.
 - **Capturar lecciones:** actualiza `tasks/lessons.md` después de correcciones.
 
-El directorio `tasks/` no existe aún; créalo (con `todo.md` y `lessons.md`) la primera vez que se necesite.
+El directorio `tasks/` existe desde 2026-07-01: `todo.md` contiene el plan maestro del refactor (con el inventario de slop auditado) y `lessons.md` las reglas aprendidas. Revisar ambos al inicio de cada sesión.
 
 ### Principios fundamentales
 - **Simplicidad primero:** cada cambio tan simple como sea posible; impactar el mínimo de código.
 - **Cero pereza:** encuentra causas raíz. Nada de fixes temporales. Estándar de desarrollador senior.
 - **Impacto mínimo:** los cambios solo tocan lo necesario; evita introducir bugs.
 - Y el que ya rige este repo: **cualquier cambio al proyecto debe reflejarse en este `CLAUDE.md`** (ver aviso al inicio).
+
+## Tooling de Refactor: Subagentes y Skills (creado 2026-07-01)
+
+Infraestructura para el refactor completo (mantener funcionalidad + UI temática MMA + borrar slop). El plan maestro con el inventario de slop auditado está en `tasks/todo.md`.
+
+**Subagentes (`.claude/agents/`)** — workers con un solo trabajo cada uno:
+
+| Agente | Rol | Herramientas |
+|---|---|---|
+| `slop-auditor` | Veredicto BORRABLE/NO BORRABLE con evidencia repo-wide antes de cualquier eliminación. Solo lee. | Read, Grep, Glob, Bash |
+| `backend-refactorer` | Ejecuta cambios en api/, scripts/, tests/, requirements. Conoce los contratos frágiles (16 features, `probabilities[1]`, CSV en runtime, sys.path). | Todas de archivos + Bash |
+| `mma-ui-builder` | Trabajo en frontend/ aplicando el design system Fight Night. Preserva IDs del DOM y contrato de API. | Todas de archivos + Bash |
+| `stack-verifier` | Levanta el stack real, corre tests, compara contra baseline; reporta PASS/FAIL. Nunca modifica. | Read, Grep, Glob, Bash |
+
+**Skills (`.claude/skills/`)** — procedimientos/conocimiento reutilizable:
+
+| Skill | Contenido |
+|---|---|
+| `mma-run-stack` | Cómo levantar y verificar Redis + API + frontend + Ollama; troubleshooting |
+| `slop-audit` | Estándar de evidencia (4 checks) para borrar código + trampas conocidas del repo |
+| `mma-ui-theme` | Design system Fight Night: tokens de corners rojo/azul, oro de campeonato, tipografía, componentes (tale of the tape, fight meter, octágono), reglas de compatibilidad |
+| `refactor-verify` | Definición de "terminado": baseline, pytest, paridad de /predict, smoke de frontend, docs |
+| `sync-claude-md` | Procedimiento para mantener este archivo como fuente de verdad tras cada cambio |
+
+Patrón de uso: las skills guardan el CÓMO (atemporal), `tasks/todo.md` guarda el QUÉ (inventario puntual), los agentes son QUIÉN ejecuta. Los agentes leen las skills relevantes al arrancar (está en sus prompts).
 
 ## Consideraciones
 

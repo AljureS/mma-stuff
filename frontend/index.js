@@ -5,10 +5,15 @@ const API_BASE_URL = 'http://localhost:8000';
 let currentPrediction = null;
 let probabilityChart = null;
 
+// Corner colors (design system Fight Night — deben coincidir con tailwind.config de index.html)
+const CORNER_RED = '#DC2626';
+const CORNER_BLUE = '#2563EB';
+const ARENA_BG = '#0B0B0F';
+const CANVAS_MUTED = '#9CA3AF';
+
 // Initialize
 document.addEventListener('DOMContentLoaded', function () {
     initializeEventListeners();
-    loadUpcomingEvents();
 });
 
 function initializeEventListeners() {
@@ -95,7 +100,7 @@ async function makePrediction() {
         const prediction = await response.json();
         currentPrediction = prediction;
 
-        displayPredictionResults(prediction);
+        displayPredictionResults(prediction, requestData.title_fight);
 
     } catch (error) {
         console.error('Error making prediction:', error);
@@ -105,12 +110,14 @@ async function makePrediction() {
     }
 }
 
-function displayPredictionResults(prediction) {
+function displayPredictionResults(prediction, titleFight) {
     // Show results section
     document.getElementById('resultsSection').classList.remove('hidden');
 
-    // Update summary
-    document.getElementById('predictedWinner').textContent = prediction.predicted_winner;
+    // Winner banner (glow del corner del ganador; dorado si es pelea titular)
+    displayWinnerBanner(prediction, titleFight);
+
+    // Update summary numbers
     document.getElementById('confidence').textContent = `${(prediction.confidence * 100).toFixed(1)}%`;
 
     const winnerProb = prediction.predicted_winner === prediction.fighter_a ?
@@ -121,19 +128,30 @@ function displayPredictionResults(prediction) {
     updateProbabilityChart(prediction);
 
     // Update key factors
-    displayKeyFactors(prediction.key_factors);
+    displayKeyFactors(prediction.key_factors, prediction);
 
     // Update AI analysis
     document.getElementById('llmAnalysis').textContent =
         prediction.llm_analysis || 'Análisis no disponible';
 
-    // Update betting insights
-    if (prediction.betting_insights) {
-        displayBettingInsights(prediction.betting_insights);
-    }
-
     // Scroll to results
     document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+function displayWinnerBanner(prediction, titleFight) {
+    const banner = document.getElementById('winnerBanner');
+    const winnerEl = document.getElementById('predictedWinner');
+    const beltNote = document.getElementById('titleBeltNote');
+    const winnerIsRed = prediction.predicted_winner === prediction.fighter_a;
+
+    // Limpiar estado de una predicción anterior
+    banner.classList.remove('winner-glow-red', 'winner-glow-blue', 'winner-glow-gold');
+    winnerEl.classList.remove('winner-red', 'winner-blue');
+
+    winnerEl.textContent = prediction.predicted_winner;
+    winnerEl.classList.add(winnerIsRed ? 'winner-red' : 'winner-blue');
+    banner.classList.add(titleFight ? 'winner-glow-gold' : (winnerIsRed ? 'winner-glow-red' : 'winner-glow-blue'));
+    beltNote.classList.toggle('hidden', !titleFight);
 }
 
 function updateProbabilityChart(prediction) {
@@ -152,21 +170,35 @@ function updateProbabilityChart(prediction) {
                     (prediction.probability_a_wins * 100).toFixed(1),
                     (prediction.probability_b_wins * 100).toFixed(1)
                 ],
-                backgroundColor: ['#3B82F6', '#EF4444'],
-                borderWidth: 0,
-                hoverBorderWidth: 2,
-                hoverBorderColor: '#FFF'
+                // Corner rojo = fighter_a, corner azul = fighter_b (consistente con las cards)
+                backgroundColor: [CORNER_RED, CORNER_BLUE],
+                borderColor: ARENA_BG,
+                borderWidth: 3,
+                hoverBorderWidth: 3,
+                hoverBorderColor: ARENA_BG
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            cutout: '62%',
             plugins: {
                 legend: {
                     position: 'bottom',
                     labels: {
-                        color: '#FFF',
-                        padding: 20
+                        color: CANVAS_MUTED,
+                        padding: 20,
+                        font: { family: 'Inter, system-ui, sans-serif' }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: '#1D1D27',
+                    titleColor: '#E7E5E4',
+                    bodyColor: '#E7E5E4',
+                    borderColor: '#2A2A36',
+                    borderWidth: 1,
+                    callbacks: {
+                        label: (context) => ` ${context.label}: ${context.parsed}%`
                     }
                 }
             }
@@ -174,95 +206,59 @@ function updateProbabilityChart(prediction) {
     });
 }
 
-function displayKeyFactors(factors) {
+// Iconos temáticos por factor + semántica del signo:
+// los valores son diferencias A - B → positivo favorece al corner rojo (fighter_a),
+// EXCEPTO la edad (invert: ser más joven es ventaja) y el factor de título (neutral → oro).
+const FACTOR_META = [
+    { match: 'reach', icon: 'fa-ruler-horizontal' },
+    { match: 'height', icon: 'fa-ruler-vertical' },
+    { match: 'age', icon: 'fa-cake-candles', invert: true },
+    { match: 'win rate', icon: 'fa-chart-line' },
+    { match: 'experience', icon: 'fa-clock-rotate-left' },
+    { match: 'striking', icon: 'fa-hand-fist' },
+    { match: 'takedown', icon: 'fa-user-ninja' },
+    { match: 'title', icon: 'fa-trophy', neutral: true }
+];
+
+function getFactorMeta(factorName) {
+    const name = factorName.toLowerCase();
+    return FACTOR_META.find(meta => name.includes(meta.match)) || { icon: 'fa-scale-balanced' };
+}
+
+function displayKeyFactors(factors, prediction) {
     const container = document.getElementById('keyFactors');
     container.innerHTML = '';
 
-    factors.forEach(factor => {
-        const factorElement = document.createElement('div');
-        factorElement.className = 'flex justify-between items-center bg-gray-600 p-3 rounded';
+    if (!factors || factors.length === 0) {
+        container.innerHTML = '<p class="factor-empty">Sin factores significativos — pelea pareja en el papel.</p>';
+        return;
+    }
 
-        const impactColor = factor.impact === 'high' ? 'text-red-400' : 'text-yellow-400';
+    factors.forEach(factor => {
+        const meta = getFactorMeta(factor.factor);
+        const favorRed = meta.invert ? factor.value < 0 : factor.value > 0;
+        const cornerClass = meta.neutral ? 'factor-gold' : (favorRed ? 'factor-red' : 'factor-blue');
+        const favorsText = meta.neutral ? 'Pelea titular' :
+            `Favorece a ${favorRed ? prediction.fighter_a : prediction.fighter_b}`;
+        const impactText = factor.impact === 'high' ? 'Impacto alto' : 'Impacto medio';
+
+        const factorElement = document.createElement('div');
+        factorElement.className = `factor-item ${cornerClass}`;
 
         factorElement.innerHTML = `
-                    <span class="text-gray-300">${factor.factor}</span>
-                    <div class="flex items-center">
-                        <span class="text-white font-semibold mr-2">${factor.value}</span>
-                        <span class="${impactColor} text-sm">${factor.impact.toUpperCase()}</span>
-                    </div>
-                `;
+            <i class="fa-solid ${meta.icon} factor-icon"></i>
+            <div class="factor-body">
+                <span class="factor-name">${factor.factor}</span>
+                <span class="factor-favors">${favorsText}</span>
+            </div>
+            <div class="factor-metrics">
+                <span class="factor-value">${factor.value > 0 ? '+' : ''}${factor.value}</span>
+                <span class="factor-impact">${impactText}</span>
+            </div>
+        `;
 
         container.appendChild(factorElement);
     });
-}
-
-function displayBettingInsights(insights) {
-    const marketOddsDiv = document.getElementById('marketOdds');
-    const recommendationDiv = document.getElementById('bettingRecommendation');
-
-    // Market odds
-    if (insights.market_odds) {
-        let oddsHtml = '';
-        Object.entries(insights.market_odds).forEach(([fighter, odds]) => {
-            const sign = odds > 0 ? '+' : '';
-            oddsHtml += `<div class="flex justify-between"><span>${fighter}:</span><span>${sign}${odds}</span></div>`;
-        });
-        marketOddsDiv.innerHTML = oddsHtml;
-    }
-
-    // Recommendation
-    if (insights.recommendation) {
-        recommendationDiv.textContent = insights.recommendation;
-    }
-}
-
-async function loadUpcomingEvents() {
-    try {
-        const response = await fetch(`${API_BASE_URL}/events/upcoming`);
-        const events = await response.json();
-
-        const container = document.getElementById('upcomingEvents');
-        container.innerHTML = '';
-
-        events.forEach(event => {
-            const eventElement = document.createElement('div');
-            eventElement.className = 'bg-gray-700 rounded-lg p-6 mb-4';
-
-            let fightsHtml = '';
-            event.fights.forEach(fight => {
-                const predictionInfo = fight.prediction ?
-                    `<span class="text-green-400 text-sm">${fight.prediction.winner} (${(fight.prediction.probability * 100).toFixed(0)}%)</span>` :
-                    '<span class="text-gray-400 text-sm">Sin predicción</span>';
-
-                fightsHtml += `
-                            <div class="flex justify-between items-center bg-gray-600 p-3 rounded mb-2">
-                                <div>
-                                    <span class="font-semibold">${fight.fighter_a}</span>
-                                    <span class="text-gray-400 mx-2">vs</span>
-                                    <span class="font-semibold">${fight.fighter_b}</span>
-                                    ${fight.title_fight ? '<span class="bg-yellow-500 text-black px-2 py-1 rounded text-xs ml-2">TÍTULO</span>' : ''}
-                                </div>
-                                <div>${predictionInfo}</div>
-                            </div>
-                        `;
-            });
-
-            eventElement.innerHTML = `
-                        <h3 class="text-xl font-semibold mb-2">${event.event_name}</h3>
-                        <p class="text-gray-400 mb-4">${new Date(event.date).toLocaleDateString('es-ES', {
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-            })}</p>
-                        <div>${fightsHtml}</div>
-                    `;
-
-            container.appendChild(eventElement);
-        });
-
-    } catch (error) {
-        console.error('Error loading upcoming events:', error);
-        document.getElementById('upcomingEvents').innerHTML =
-            '<p class="text-gray-400">Error cargando eventos próximos</p>';
-    }
 }
 
 function showLoading(show) {

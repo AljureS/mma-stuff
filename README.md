@@ -1,158 +1,65 @@
-# MMA Fight Predictor - Sistema de Predicción con ML + IA
+# MMA Fight Predictor
 
-Sistema completo de predicción de peleas MMA que combina Machine Learning (XGBoost) con análisis cualitativo mediante LLM (OpenAI | local con qwen). El modelo utiliza 16 features técnicas para calcular probabilidades de victoria, mientras que un sistema de IA dual (OpenAI API con fallback a Ollama local) genera análisis explicativos detallados. La arquitectura incluye cache inteligente con Redis, scraping automático de datos, y una interfaz web moderna para visualización de predicciones en tiempo real.
+Predicción de peleas de MMA: una API FastAPI compara las estadísticas de dos peleadores, un modelo XGBoost calcula probabilidades de victoria y un LLM (OpenAI con fallback a Ollama local) genera el análisis cualitativo en español. Incluye frontend web con temática Fight Night y scraping automático de UFCStats para mantener frescos los datos de los peleadores.
 
----
+> ⚠️ **El modelo actual es un dummy de desarrollo** (entrenado con datos aleatorios). Las probabilidades NO tienen valor predictivo real; no usar para apuestas. Entrenar el modelo real es el pendiente #1 del proyecto.
 
-## 🏗️ Arquitectura del Sistema
+## Arquitectura
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         USUARIO / NAVEGADOR                         │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │              Frontend (HTML/CSS/JavaScript)                   │  │
-│  │            frontend/index.html (puerto 3000)                  │  │
-│  │  • Input de peleadores                                        │  │
-│  │  • Gráficos de probabilidades (Chart.js)                      │  │
-│  │  • Visualización de análisis IA                               │  │
-│  └─────────────────────┬─────────────────────────────────────────┘  │
-└────────────────────────┼────────────────────────────────────────────┘
-                         │ HTTP POST /predict
-                         │ (include_llm_analysis: true/false)
-                         ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       BACKEND - FastAPI                             │
-│                   api/main.py (puerto 8000)                         │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  1. Validar peleadores en DB                                │    │
-│  │  2. Cargar datos completos (fighters_complete.csv)          │    │
-│  │  3. Calcular 16 features del modelo                         │    │
-│  └─────────────────────┬───────────────────────────────────────┘    │
-│                        │                                            │
-│                        ▼                                            │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │         PREDICCIÓN ML (XGBoost)                             │    │
-│  │         models/mma_prediction_model.pkl                     │    │
-│  │  • Input: 16 features (diferencias físicas, técnicas, etc.) │    │
-│  │  • Output: Probabilidades (ej: 80.5% vs 19.5%)              │    │
-│  │  • ⚠️ AQUÍ SE DEFINEN LOS %                                 |    |
-│  └─────────────────────┬───────────────────────────────────────┘    │
-│                        │                                            │
-│                        ▼                                            │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  4. Generar análisis LLM (si include_llm_analysis=true)     │    │ 
-│  │     → Llama a llm_client.generate()                         │    │
-│  └─────────────────────┬───────────────────────────────────────┘    │
-│                        │                                            │
-└────────────────────────┼────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    LLM CLIENT (Orquestador)                         │
-│                     api/llm_client.py                               │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  async def generate():                                      │    │
-│  │    1. ¿OpenAI disponible? → Intentar OpenAI API             │    │
-│  │    2. Si falla/timeout → Fallback automático a Ollama       │    │
-│  │    3. Reintentos exponenciales (1s, 2s, 4s)                 │    │
-│  │    4. Circuit breaker para proteger servicios               │    │
-│  └─────────────────────┬───────────────────────────────────────┘    │
-│                        │                                            │
-│          ┌─────────────┴─────────────┐                              │
-│          │                           │                              │
-│          ▼                           ▼                              │
-│  ┌───────────────┐          ┌────────────────────┐                  │
-│  │ OpenAI API    │          │ Ollama Local       │                  │
-│  │ (Primario)    │  FALLA   │ (Fallback)         │                  │
-│  │               │  ───→    │                    │                  │
-│  │ gpt-4o-mini   │          │ Qwen2.5:7b         │                  │
-│  │ Timeout: 30s  │          │ Timeout: 180s      │                  │
-│  │ Externo/Rápido│          │ Local/Lento        │                  │
-│  └───────────────┘          └────────────────────┘                  │
-│                                                                     │
-│  📝 LLM genera análisis cualitativo DESPUÉS de la predicción        │
-│  ⚠️ NO modifica los % - solo explica el resultado del modelo ML     │
-└─────────────────────────────────────────────────────────────────────┘
-                         │
-                         │ Análisis generado (1200-1500 chars)
-                         ▼
-┌────────────────────────────────────────────────────────────────────┐
-│                 ALMACENAMIENTO Y DATOS                             │
-│                                                                    │
-│  ┌──────────────────────┐     ┌──────────────────────────────┐     │
-│  │  PostgreSQL          │     │  Redis Cache                 │     │
-│  │  Base de datos       │     │  Cache de predicciones       │     │
-│  │  principal           │     │  • TTL: 1 hora (3600s)       │     │
-│  │  (Opcional)          │     │  • Key: prediction:{A}:{B}   │     │
-│  └──────────────────────┘     │  • Evita recálculos          │     │
-│                               └──────────────────────────────┘     │
-│                                                                    │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  Archivos CSV                                                │  │
-│  │  data/fighters_complete.csv  - Base de datos de peleadores   │  │
-│  │  data/fight_history.csv      - Historial de peleas           │  │
-│  │  data/training_data.csv      - Datos para entrenar modelo    │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                                                                    │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  Web Scraping (Actualización de Datos)                       │  │
-│  │  scripts/data_collection.py                                  │  │
-│  │  • UFCStats.com - Estadísticas oficiales                     │  │
-│  │  • Sherdog - Rankings y datos históricos                     │  │
-│  │  • Tapology - Eventos futuros                                │  │
-│  │  • Auto-scraping si datos > 7 días de antigüedad             │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+Navegador (frontend/, :3000)
+    │  POST /predict
+    ▼
+FastAPI (api/main.py, :8000) ── cache ──> Redis (:6379)
+    │        │
+    │        ├─> XGBoost (models/mma_prediction_model.pkl) — 16 features → probabilidades
+    │        ├─> LLM (api/llm_client.py): OpenAI gpt-4o-mini → fallback Ollama qwen2.5:7b
+    │        └─> Scraper UFCStats (scripts/data_collection.py) si el peleador falta o >7 días
+    ▼
+data/fighters_complete.csv (base de datos viva, la API escribe en runtime)
 ```
 
----
+## Quickstart
 
-## 📋 Componentes de la Arquitectura
+```bash
+# dependencias (venv en la raíz)
+venv/bin/pip install -r api/requirements.txt
 
-1. **Frontend (mma_frontend.html)** - Interfaz web con búsqueda de peleadores, gráficos interactivos y visualización de predicciones en tiempo real
-2. **API FastAPI (api/main.py)** - Servidor backend que orquesta validación, cálculo de features, predicción ML y generación de análisis LLM
-3. **Modelo XGBoost (mma_prediction_model.pkl)** - Clasificador binario que procesa 16 features y genera probabilidades de victoria (único componente que afecta los %)
-4. **LLM Client (api/llm_client.py)** - Orquestador que intenta OpenAI API primero y hace fallback automático a Ollama si falla
-5. **OpenAI API (gpt-4o-mini)** - Servicio externo de IA para análisis rápido (30s timeout), usado como proveedor primario
-6. **Ollama Local (Qwen2.5:7b)** - Modelo LLM local como fallback, más lento (180s timeout) pero siempre disponible
-7. **Redis Cache** - Almacenamiento en memoria para cachear predicciones por 1 hora y evitar recálculos innecesarios
-8. **PostgreSQL (Opcional)** - Base de datos relacional para almacenamiento persistente de peleas y resultados históricos
-9. **CSV Data Store (data/)** - Archivos planos con datos de peleadores, historial de peleas y datos de entrenamiento del modelo
-10. **Web Scraper (data_collection.py)** - Sistema automatizado que recopila datos frescos de UFCStats, Sherdog y Tapology cuando los datos tienen >7 días
+# servicios
+redis-server                          # obligatorio
+ollama serve && ollama pull qwen2.5:7b   # opcional (fallback LLM)
 
+# datos de desarrollo (solo si faltan modelo o CSV)
+venv/bin/python scripts/setup_dev_data.py
 
-# ============================================
-# INICIAR MMA PREDICTOR - COPIAR Y PEGAR TODO
-# ============================================
+# API
+cd api && ../venv/bin/python main.py     # :8000, docs en /docs
 
-# Terminal 1 - Backend API
-cd ~/mma-stuff/api
-source venv/bin/activate
-python main.py
+# frontend
+python3 -m http.server 3000 --directory frontend
+```
 
-# ============================================
-# ABRIR NUEVA TERMINAL PARA ESTO:
-# ============================================
+Configuración LLM en `api/.env` (gitignored): `OPENAI_API_KEY`, `OPENAI_MODEL`, `OLLAMA_URL`, `OLLAMA_MODEL`, `LLM_MAX_RETRIES`, `LLM_TIMEOUT`. Sin API key, opera en modo solo-Ollama.
 
-# Terminal 2 - Frontend
-cd ~/mma-stuff
-python3 -m http.server 3000
+## Endpoints
 
-# ============================================
-# ABRIR EN NAVEGADOR:
-# http://localhost:3000
-# http://localhost:8000/docs
-# ============================================
+| Endpoint | Descripción |
+|---|---|
+| `GET /` | Health check (modelo cargado, conteo de peleadores) |
+| `POST /predict` | Predicción con probabilidades, factores clave y análisis LLM opcional |
+| `GET /fighter/{name}` | Estadísticas de un peleador (CSV + auto-scraping) |
+| `GET /search/fighters/{query}` | Búsqueda fuzzy de peleadores |
+| `GET /health/llm` | Estado de proveedores LLM y circuit breakers |
 
-# ============================================
-# VERIFICAR (opcional - en Terminal 3)
-# ============================================
-curl http://localhost:8000/
-curl http://localhost:3000/
+## Tests
 
-# ============================================
-# PARAR TODO: Ctrl+C en cada terminal
-# ============================================
+```bash
+venv/bin/python -m pytest tests/ -v   # 15 tests del cliente LLM
+python test_scraping.py               # prueba manual del scraper (red real)
+```
+
+## Documentación
+
+- **`CLAUDE.md`** — fuente única de verdad del proyecto: estado real del código, qué es funcional y qué es placeholder, contratos frágiles y cómo trabajar en el repo. **Léelo antes de tocar código.**
+- `README_LLM.md` — detalle del sistema LLM (fallback, circuit breakers, costos).
+- `tasks/todo.md` — plan del refactor 2026-07 y su estado.

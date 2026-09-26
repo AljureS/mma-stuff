@@ -1,30 +1,192 @@
-        .fighter-card {
-            transition: all 0.3s ease;
-        }
+/* ============================================================
+   Fight Night — estilos custom (complementan Tailwind CDN)
+   Tokens: arena #0B0B0F/#14141B/#1D1D27/#2A2A36,
+   corner rojo #DC2626/#EF4444, corner azul #2563EB/#3B82F6,
+   oro #D4AF37 (solo campeonato). Ver .claude/skills/mma-ui-theme.
+   ============================================================ */
 
-        .fighter-card:hover {
-            transform: translateY(-5px);
-        }
+/* --- Fighter cards (corners) --- */
+.fighter-card {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
 
-        .prediction-glow {
-            box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
-        }
+.fighter-card:hover {
+    transform: translateY(-4px);
+}
 
-        .loading-spinner {
-            border: 3px solid #f3f4f6;
-            border-top: 3px solid #3b82f6;
-            border-radius: 50%;
-            width: 24px;
-                height: 24px;
-            animation: spin 1s linear infinite;
-        }
+.corner-card-red:hover {
+    box-shadow: 0 10px 30px rgba(220, 38, 38, 0.25);
+}
 
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
+.corner-card-blue:hover {
+    box-shadow: 0 10px 30px rgba(37, 99, 235, 0.25);
+}
 
-            100% {
-                transform: rotate(360deg);
-            }
-        }
+/* --- Bloque VS: gradiente rojo -> azul --- */
+.vs-badge {
+    background: linear-gradient(100deg, #EF4444 35%, #3B82F6 65%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+/* --- Banner del ganador: glow del corner (oro solo si es pelea titular) --- */
+.winner-glow-red {
+    border-color: #DC2626 !important;
+    box-shadow: 0 0 45px rgba(220, 38, 38, 0.35);
+}
+
+.winner-glow-blue {
+    border-color: #2563EB !important;
+    box-shadow: 0 0 45px rgba(37, 99, 235, 0.35);
+}
+
+.winner-glow-gold {
+    border-color: #D4AF37 !important;
+    box-shadow: 0 0 45px rgba(212, 175, 55, 0.4);
+}
+
+/* Nombre del ganador siempre en el color de su corner (el oro va en el glow/badge) */
+.winner-red {
+    color: #EF4444;
+}
+
+.winner-blue {
+    color: #3B82F6;
+}
+
+/* --- Factores clave (inyectados por index.js) --- */
+.factor-item {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    padding: 0.75rem 1rem;
+    background: #1D1D27;
+    border: 1px solid #2A2A36;
+    border-left-width: 3px;
+    border-radius: 0.5rem;
+}
+
+.factor-icon {
+    font-size: 1.125rem;
+    width: 1.5rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.factor-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+
+.factor-name {
+    color: #E7E5E4;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.factor-favors {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.factor-metrics {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    flex-shrink: 0;
+}
+
+.factor-value {
+    font-family: "Barlow Condensed", Impact, sans-serif;
+    font-weight: 700;
+    font-size: 1.25rem;
+    color: #E7E5E4;
+    line-height: 1.1;
+}
+
+.factor-impact {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6B7280;
+}
+
+.factor-red {
+    border-left-color: #DC2626;
+}
+
+.factor-red .factor-icon,
+.factor-red .factor-favors {
+    color: #EF4444;
+}
+
+.factor-blue {
+    border-left-color: #2563EB;
+}
+
+.factor-blue .factor-icon,
+.factor-blue .factor-favors {
+    color: #3B82F6;
+}
+
+.factor-gold {
+    border-left-color: #D4AF37;
+}
+
+.factor-gold .factor-icon,
+.factor-gold .factor-favors {
+    color: #D4AF37;
+}
+
+.factor-empty {
+    color: #9CA3AF;
+    font-size: 0.9rem;
+}
+
+/* --- Análisis de esquina: barra izquierda con gradiente de corners --- */
+.corner-analysis {
+    position: relative;
+    overflow: hidden;
+}
+
+.corner-analysis::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(to bottom, #EF4444, #3B82F6);
+}
+
+/* --- Spinner de carga: octágono girando --- */
+.octagon-spinner {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    background: conic-gradient(from 0deg, #DC2626, #2563EB, #DC2626);
+    clip-path: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
+    animation: spin 1.2s linear infinite;
+}
+
+.octagon-spinner::after {
+    content: '';
+    position: absolute;
+    inset: 7px;
+    background: #14141B;
+    clip-path: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}

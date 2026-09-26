@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict
@@ -7,8 +7,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import logging
-import asyncio
-import aiohttp
 import redis
 import json
 from dotenv import load_dotenv
@@ -18,7 +16,7 @@ import sys
 # Add scripts directory to path for data_collection
 sys.path.append(str(Path(__file__).parent.parent / 'scripts'))
 
-from llm_client import get_llm_client, LLMProvider
+from llm_client import get_llm_client
 
 # Load environment variables
 load_dotenv()
@@ -67,20 +65,13 @@ class FightPredictionResponse(BaseModel):
     predicted_winner: str
     key_factors: List[Dict]
     llm_analysis: Optional[str] = None
-    betting_insights: Optional[Dict] = None
     timestamp: str
 
 class FighterStatsResponse(BaseModel):
     name: str
     record: str
     stats: Dict
-    recent_form: List[Dict]
     ranking: Optional[int] = None
-
-class UpcomingEvent(BaseModel):
-    event_name: str
-    date: str
-    fights: List[Dict]
 
 @app.on_event("startup")
 async def load_models():
@@ -128,13 +119,18 @@ async def predict_fight(request: FightPredictionRequest):
         raise HTTPException(status_code=503, detail="Prediction model not loaded")
     
     try:
-        # Check cache first
-        cache_key = f"prediction:{request.fighter_a}:{request.fighter_b}"
+        # Check cache first (key normalizada: sin distinguir orden a/b ni casing)
+        cache_key = _normalize_cache_key(request.fighter_a, request.fighter_b)
         cached_result = redis_client.get(cache_key)
-        
+
         if cached_result:
+            cached = json.loads(cached_result)
+            # El payload cacheado depende del orden a/b del request original;
+            # si este request viene con el orden invertido, transformar antes de responder
+            if cached['fighter_a'].strip().lower() != request.fighter_a.strip().lower():
+                cached = _swap_cached_prediction(cached)
             logger.info(f"Returning cached prediction for {request.fighter_a} vs {request.fighter_b}")
-            return FightPredictionResponse(**json.loads(cached_result))
+            return FightPredictionResponse(**cached)
         
         # Validar que los luchadores existen
         logger.info(f"Searching for fighter_a: '{request.fighter_a}'")
@@ -171,9 +167,6 @@ async def predict_fight(request: FightPredictionRequest):
                 fighter_a_data, fighter_b_data, probabilities
             )
         
-        # Obtener insights de apuestas
-        betting_insights = await get_betting_insights(request.fighter_a, request.fighter_b)
-        
         # Crear respuesta
         response = FightPredictionResponse(
             fighter_a=request.fighter_a,
@@ -184,7 +177,6 @@ async def predict_fight(request: FightPredictionRequest):
             predicted_winner=request.fighter_a if probabilities[1] > 0.5 else request.fighter_b,
             key_factors=get_key_factors(features, fighter_a_data, fighter_b_data),
             llm_analysis=llm_analysis,
-            betting_insights=betting_insights,
             timestamp=datetime.now().isoformat()
         )
         
@@ -212,18 +204,15 @@ async def get_fighter_stats(fighter_name: str):
     
     # Calcular record
     record = f"{fighter_data.get('wins', 0)}-{fighter_data.get('losses', 0)}-{fighter_data.get('draws', 0)}"
-    
-    # Obtener forma reciente
-    recent_form = get_recent_form(fighter_name)
-    
-    # Obtener ranking actual
-    ranking = get_current_ranking(fighter_name, fighter_data.get('weight_class'))
-    
+
+    # Ranking desde el CSV (columna puede venir NaN)
+    ranking_value = _nan_to_none(fighter_data.get('ranking'))
+    ranking = int(ranking_value) if ranking_value is not None else None
+
     return FighterStatsResponse(
         name=fighter_name,
         record=record,
-        stats=fighter_data,
-        recent_form=recent_form,
+        stats=_sanitize_csv_record(fighter_data),
         ranking=ranking
     )
 
@@ -241,128 +230,17 @@ async def search_fighters(query: str, limit: int = 10):
     
     results = []
     for _, fighter in matches.iterrows():
-        results.append({
+        results.append(_sanitize_csv_record({
             'name': fighter['name'],
             'record': f"{fighter.get('wins', 0)}-{fighter.get('losses', 0)}-{fighter.get('draws', 0)}",
             'weight_class': fighter.get('weight_class', 'Unknown'),
             'ranking': fighter.get('ranking', None)
-        })
+        }))
     
     return {
         'query': query,
         'results': results,
         'count': len(results)
-    }
-
-@app.get("/events/upcoming", response_model=List[UpcomingEvent], tags=["Events"])
-async def get_upcoming_events():
-    """Obtener eventos próximos con predicciones"""
-    
-    # En producción: obtener de base de datos o scraping actualizado
-    upcoming_events = [
-        {
-            "event_name": "UFC 300",
-            "date": "2025-09-15",
-            "fights": [
-                {"fighter_a": "Jon Jones", "fighter_b": "Stipe Miocic", "title_fight": True},
-                {"fighter_a": "Alexander Volkanovski", "fighter_b": "Ilia Topuria", "title_fight": True}
-            ]
-        }
-    ]
-    
-    # Agregar predicciones para cada pelea
-    for event in upcoming_events:
-        for fight in event['fights']:
-            try:
-                # Hacer predicción rápida
-                request = FightPredictionRequest(
-                    fighter_a=fight['fighter_a'],
-                    fighter_b=fight['fighter_b'],
-                    include_llm_analysis=False
-                )
-                prediction = await predict_fight(request)
-                
-                fight['prediction'] = {
-                    'winner': prediction.predicted_winner,
-                    'probability': max(prediction.probability_a_wins, prediction.probability_b_wins),
-                    'confidence': prediction.confidence
-                }
-                
-            except Exception as e:
-                logger.warning(f"Could not predict {fight['fighter_a']} vs {fight['fighter_b']}: {e}")
-                fight['prediction'] = None
-    
-    return [UpcomingEvent(**event) for event in upcoming_events]
-
-@app.post("/retrain", tags=["Model Management"])
-async def retrain_model(background_tasks: BackgroundTasks):
-    """Reentrenar el modelo con nuevos datos"""
-    
-    # Solo permitir en desarrollo o con autenticación
-    background_tasks.add_task(retrain_model_background)
-    
-    return {
-        "message": "Model retraining started in background",
-        "status": "accepted",
-        "timestamp": datetime.now().isoformat()
-    }
-
-async def retrain_model_background():
-    """Reentrenar modelo en background"""
-    try:
-        logger.info("Starting model retraining...")
-        
-        # 1. Recolectar nuevos datos
-        # collector = MMADataCollector()
-        # new_data = collector.scrape_recent_fights()
-        
-        # 2. Preparar datos de entrenamiento
-        # training_data = prepare_training_data(new_data)
-        
-        # 3. Reentrenar modelo
-        # new_model = train_new_model(training_data)
-        
-        # 4. Validar modelo
-        # validation_score = validate_model(new_model)
-        
-        # 5. Si es mejor, reemplazar modelo actual
-        # if validation_score > current_model_score:
-        #     replace_model(new_model)
-        
-        logger.info("Model retraining completed")
-        
-    except Exception as e:
-        logger.error(f"Error retraining model: {e}")
-
-@app.get("/analytics/model-performance", tags=["Analytics"])
-async def get_model_performance():
-    """Obtener métricas de rendimiento del modelo"""
-    
-    # En producción: calcular desde base de datos de predicciones vs resultados reales
-    return {
-        "accuracy": 0.72,
-        "precision": 0.74,
-        "recall": 0.69,
-        "f1_score": 0.71,
-        "total_predictions": 1547,
-        "correct_predictions": 1114,
-        "last_updated": "2025-09-03T10:00:00Z"
-    }
-
-@app.get("/analytics/betting-roi", tags=["Analytics"])
-async def get_betting_roi():
-    """ROI si siguieras las predicciones del modelo"""
-
-    return {
-        "total_bets": 234,
-        "winning_bets": 162,
-        "win_rate": 0.692,
-        "total_staked": 2340.00,
-        "total_returned": 2876.50,
-        "profit": 536.50,
-        "roi": 0.229,  # 22.9%
-        "best_streak": 12,
-        "worst_streak": -5
     }
 
 @app.get("/health/llm", tags=["Health"])
@@ -381,6 +259,44 @@ async def llm_health_check():
     }
 
 # Funciones auxiliares
+
+def _normalize_cache_key(fighter_a: str, fighter_b: str) -> str:
+    """Cache key de predicción independiente del orden a/b, casing y espacios"""
+    names = sorted([fighter_a.strip().lower(), fighter_b.strip().lower()])
+    return f"prediction:{names[0]}:{names[1]}"
+
+
+def _swap_cached_prediction(cached: Dict) -> Dict:
+    """Invertir la perspectiva a/b de una predicción cacheada.
+
+    El payload cacheado guarda probability_a_wins relativa al fighter_a del
+    request original; si el request actual trae los peleadores en orden
+    inverso, hay que intercambiar nombres y probabilidades, y negar los
+    key_factors (son diferencias a-b). predicted_winner y confidence no
+    dependen del orden.
+    """
+    swapped = dict(cached)
+    swapped['fighter_a'], swapped['fighter_b'] = cached['fighter_b'], cached['fighter_a']
+    swapped['probability_a_wins'], swapped['probability_b_wins'] = (
+        cached['probability_b_wins'], cached['probability_a_wins']
+    )
+    swapped['key_factors'] = [
+        {**factor, 'value': -factor['value']} for factor in cached.get('key_factors', [])
+    ]
+    return swapped
+
+
+def _nan_to_none(value):
+    """NaN de pandas -> None (JSON no admite NaN)"""
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    return value
+
+
+def _sanitize_csv_record(record: Dict) -> Dict:
+    """Sanitizar un dict construido desde una fila del CSV: NaN -> None"""
+    return {key: _nan_to_none(value) for key, value in record.items()}
+
 
 def get_fighter_data(fighter_name: str) -> Optional[Dict]:
     """Obtener datos de un luchador con scraping automático y cache inteligente (7 días)"""
@@ -641,28 +557,6 @@ Sé específico y técnico usando tu conocimiento de MMA. IMPORTANTE: Termina el
         logger.error(f"Error generating LLM analysis: {e}", exc_info=True)
         return "Análisis LLM no disponible temporalmente debido a un error técnico."
 
-async def get_betting_insights(fighter_a: str, fighter_b: str) -> Optional[Dict]:
-    """Obtener insights de apuestas"""
-    
-    try:
-        # En producción: llamar a APIs de casas de apuestas
-        return {
-            "market_odds": {
-                fighter_a: -120,
-                fighter_b: +100
-            },
-            "implied_probability": {
-                fighter_a: 0.545,
-                fighter_b: 0.500
-            },
-            "value_bet": fighter_b if True else None,  # Lógica de value betting
-            "recommendation": "Slight value on underdog based on model vs market"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting betting insights: {e}")
-        return None
-
 def get_key_factors(features: List[float], fighter_a_data: Dict, fighter_b_data: Dict) -> List[Dict]:
     """Identificar factores clave de la predicción"""
     
@@ -685,22 +579,8 @@ def get_key_factors(features: List[float], fighter_a_data: Dict, fighter_b_data:
     
     return sorted(key_factors, key=lambda x: abs(x["value"]), reverse=True)[:5]
 
-def get_recent_form(fighter_name: str, limit: int = 5) -> List[Dict]:
-    """Obtener forma reciente del luchador"""
-    # En producción: consultar base de datos de peleas
-    return [
-        {"opponent": "Opponent 1", "result": "W", "method": "TKO", "round": 2},
-        {"opponent": "Opponent 2", "result": "W", "method": "Decision", "round": 5}
-    ]
-
-def get_current_ranking(fighter_name: str, weight_class: Optional[str]) -> Optional[int]:
-    """Obtener ranking actual del luchador"""
-    # En producción: consultar rankings actualizados
-    return 5  # Placeholder
-
 if __name__ == "__main__":
     import uvicorn
-    import sys
     import os
     
     # En desarrollo con reload
