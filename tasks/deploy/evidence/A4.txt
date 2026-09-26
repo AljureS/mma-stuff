@@ -1,0 +1,1 @@
+2026-09-26 pytest 15 passed (22.64s); /predict Jon Jones vs Stipe Miocic sin LLM = 0.7760478854179382 (baseline exacto); node --check OK; CSV sin cambios (cmp).

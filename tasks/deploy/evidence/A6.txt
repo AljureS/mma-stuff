@@ -1,0 +1,1 @@
+2026-09-26 CLAUDE.md: Estado Actual, árbol (Dockerfile/compose/.dockerignore/.collab), endpoint /ui, infraestructura Redis/Uvicorn, frontend API_BASE_URL, env REDIS_URL leída, pendiente #4, sección 'Deploy en el Home Lab'. README: sección deploy + /ui en endpoints.

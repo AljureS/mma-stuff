@@ -41,6 +41,16 @@ python3 -m http.server 3000 --directory frontend
 
 Configuración LLM en `api/.env` (gitignored): `OPENAI_API_KEY`, `OPENAI_MODEL`, `OLLAMA_URL`, `OLLAMA_MODEL`, `LLM_MAX_RETRIES`, `LLM_TIMEOUT`. Sin API key, opera en modo solo-Ollama.
 
+## Deploy en el home lab (solo tailnet)
+
+```bash
+# en el server (~/apps/mma-stuff, copiado con rsync; api/.env aparte con chmod 600)
+docker compose up -d --build          # api en 127.0.0.1:8000 + redis interno
+tailscale serve --bg 8000             # HTTPS solo dentro del tailnet (nunca funnel)
+```
+
+UI en `https://homelab.<tailnet>.ts.net/ui/`. Quién puede entrar lo decide la policy del tailnet (`tasks/deploy/tailnet-policy.hujson`). Detalle en `CLAUDE.md` → "Deploy en el Home Lab".
+
 ## Endpoints
 
 | Endpoint | Descripción |
@@ -50,6 +60,7 @@ Configuración LLM en `api/.env` (gitignored): `OPENAI_API_KEY`, `OPENAI_MODEL`,
 | `GET /fighter/{name}` | Estadísticas de un peleador (CSV + auto-scraping) |
 | `GET /search/fighters/{query}` | Búsqueda fuzzy de peleadores |
 | `GET /health/llm` | Estado de proveedores LLM y circuit breakers |
+| `GET /ui/` | Frontend servido por la API (mismo origen) |
 
 ## Tests
 

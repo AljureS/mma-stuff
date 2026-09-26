@@ -1,0 +1,22 @@
+// Policy del tailnet (admin console → Access controls). Reemplaza el "allow all" por defecto.
+// Todos los devices son del mismo usuario (saidsimon2@), así que la restricción es POR DEVICE vía hosts.
+// Para autorizar un device nuevo en el futuro: agregalo a "hosts" y a "src" del grant. Nada más.
+// Antes de guardar: revisá la policy actual en la consola y conservá cualquier regla propia que ya tengas.
+{
+  "hosts": {
+    "macbook-said": "100.90.123.115",
+    "homelab":      "100.99.75.17",
+    // IP de prueba (no es un device real): representa "cualquier otro device" en los tests negativos.
+    "otro-device":  "100.64.0.250",
+  },
+  "grants": [
+    // Solo el MacBook llega al homelab: HTTPS de la app (tailscale serve) + SSH de administración.
+    // tailscale serve respeta esta grant; su proxy a 127.0.0.1:8000 es local y no necesita otra.
+    { "src": ["macbook-said"], "dst": ["homelab"], "ip": ["tcp:443", "tcp:22"] },
+  ],
+  // Tests: la consola rechaza cualquier edición futura que rompa esto (p. ej. una grant amplia).
+  "tests": [
+    { "src": "macbook-said", "accept": ["homelab:443", "homelab:22"], "deny": ["homelab:8000", "homelab:6379"] },
+    { "src": "otro-device",  "deny":   ["homelab:443", "homelab:22", "homelab:8000"] },
+  ],
+}

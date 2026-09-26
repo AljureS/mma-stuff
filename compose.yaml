@@ -1,0 +1,37 @@
+name: mma
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    env_file: api/.env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models:ro
+    user: "${UID:-1000}:${GID:-1000}"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 1g
+    healthcheck:
+      # Sano = modelo cargado, CSV con peleadores y Redis respondiendo (no solo HTTP 200 de /)
+      test: ["CMD", "python", "-c", "import json, os, urllib.request, redis; d = json.load(urllib.request.urlopen('http://127.0.0.1:8000/')); assert d['models_loaded'] and d['fighters_count'] > 0; redis.Redis.from_url(os.environ['REDIS_URL']).ping()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

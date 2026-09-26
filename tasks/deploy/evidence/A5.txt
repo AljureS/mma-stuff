@@ -1,0 +1,2 @@
+2026-09-26 Gate de consenso: 3 rondas. R1 BLOCKERS (api/.env trackeado + 6) -> fixes; R2 BLOCKERS (secreto en log de Codex, funnel rc; regex disputado con evidencia, R3 lo confirmó falso) -> fixes; R3 VERDICT: NO BLOCKERS (.collab/delegations/20260926T191845Z-last-message.md). Tests: pytest 15 passed, /predict 0.7760478854179382, CORS evil->400, /ui 200.
+MEDIUM R3 incorporado a C1: capturar baseline de listeners explícitamente antes del rsync.

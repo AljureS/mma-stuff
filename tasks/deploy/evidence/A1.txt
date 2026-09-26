@@ -1,0 +1,2 @@
+2026-09-26 Muad'Dib verificó diff de Codex (delegación .collab/delegations/20260926T183639Z): REDIS_URL via from_url con default; /ui montado; GET / intacto.
+Local: GET / healthy models_loaded=true; /ui/ 200, /ui/index.js 200, /ui/styles.css 200

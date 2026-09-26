@@ -1,0 +1,1 @@
+2026-09-26 index.js: API_BASE_URL = origin salvo file:/puerto 3000 -> localhost:8000. node --check OK (Codex); servido desde /ui/ en :8000 usa mismo origen. search 200.

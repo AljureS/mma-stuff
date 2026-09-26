@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import pickle
@@ -9,6 +10,7 @@ from datetime import datetime
 import logging
 import redis
 import json
+import os
 from dotenv import load_dotenv
 from pathlib import Path
 import sys
@@ -31,17 +33,26 @@ app = FastAPI(
     version="1.0.0"
 )
 
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/ui", StaticFiles(directory=FRONTEND_DIR, html=True), name="ui")
+
 # CORS para permitir requests desde frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción: dominios específicos
+    # Solo el frontend de dev en :3000 necesita CORS; servido desde /ui es mismo origen
+    allow_origins=[o.strip() for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Redis para cache
-redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+redis_client = redis.Redis.from_url(
+    os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+)
 
 # Modelos globales (cargar al inicio)
 prediction_model = None

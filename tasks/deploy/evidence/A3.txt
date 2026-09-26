@@ -1,0 +1,1 @@
+2026-09-26 Dockerfile python:3.11-slim+libgomp1, .dockerignore excluye .env/data/models/venv, compose.yaml: redis sin ports, api 127.0.0.1:8000, data rw, models ro, mem_limit. docker compose config -q exit 0 (Codex). Build real: pendiente en server (C2).

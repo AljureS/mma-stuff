@@ -1,3 +1,46 @@
+# Plan: Deploy al Home Lab vía Tailscale (2026-09-26)
+
+**Objetivo:** copiar (NO mover) el proyecto al homelab (`simon@homelab`, Debian 13) y servirlo solo dentro del tailnet, accesible únicamente desde `macbook-pro-de-said` (extensible a más devices después).
+**Roles:** Muad'Dib (Claude Code) planea/verifica/integra/opera el server · HalJordan (Codex) implementa el diff del repo y revisa · Owner: pasos humanos (sudo, admin console Tailscale) y desempates.
+**Guardia:** un /loop verificador corre durante toda la ejecución (`tasks/deploy/verify_plan.sh`): la Mac no pierde ni altera archivos fuera del scope, el diff queda dentro del scope, el server no expone nada en 0.0.0.0 salvo sshd, funnel apagado, y los items se marcan solo con evidencia.
+
+## Arquitectura destino
+```
+MacBook (tailnet) ──HTTPS──> tailscale serve (homelab:443) ──> 127.0.0.1:8000 api (docker)
+                                                              ├─ /      health (igual que hoy)
+                                                              ├─ /ui/   frontend estático (mismo origen)
+                                                              └─ redis (red interna compose, sin puerto publicado)
+ACL de Tailscale: solo el MacBook → homelab:443 (y :22 para admin)
+```
+Sin Ollama en el server (qwen2.5:7b no cabe en 6 GB); LLM = OpenAI, con degradación ya existente.
+
+## Fase A — Repo (HalJordan implementa, Muad'Dib verifica, gate de consenso)
+- [x] A1 `api/main.py`: Redis desde `REDIS_URL` (default `redis://localhost:6379/0`) y servir `frontend/` en `/ui` si el directorio existe
+- [x] A2 `frontend/index.js`: `API_BASE_URL` = mismo origen, fallback a `http://localhost:8000` cuando se sirve en :3000 / file://
+- [x] A3 `Dockerfile` (python:3.11-slim, deps pinneadas = venv que generó el pkl), `.dockerignore`, `compose.yaml` (api + redis, `127.0.0.1:8000`, `./data` montado rw, `./models` ro, `env_file: api/.env`, `restart: unless-stopped`, límites de memoria)
+- [x] A4 Tests: pytest 15/15 + paridad local de /predict = 0.7760478854179382 + `docker compose config` válido
+- [x] A5 Review de Codex sin blockers → commit local (sin push)
+- [x] A6 CLAUDE.md + README sincronizados (sección Deploy Home Lab)
+
+## Fase B — Prerrequisitos humanos (Owner)
+- [ ] B1 Despertar el homelab (abrir tapa) y confirmar `tailscale ping homelab` responde
+- [ ] B2 Llave SSH (paso 7 del plan del homelab): `ssh-copy-id` desde la Mac para que el agente pueda operar sin contraseña
+- [ ] B3 Correr como sudo `~/setup/mma_prereqs.sh` (Muad'Dib lo escribe): Docker oficial + compose plugin, rsync, `simon` al grupo docker, `tailscale set --operator=simon`, lid-switch=ignore
+- [ ] B4 Admin console Tailscale: MagicDNS + HTTPS certs activos; ACL que restrinja homelab a solo el MacBook (policy lista en `tasks/deploy/tailnet-policy.hujson`)
+
+## Fase C — Transferencia y despliegue (Muad'Dib)
+- [ ] C1 (antes: capturar baseline de listeners del server con verify_plan.sh) `rsync` (copia, sin `--delete`, sin tocar origen) a `~/apps/mma-stuff/` excluyendo venv/.git/.pytest_cache/api/.env; `.env` por scp con chmod 600
+- [ ] C2 `docker compose up -d --build`; health 200 en 127.0.0.1:8000 desde el server
+- [ ] C3 `tailscale serve --bg 8000` (nunca funnel); `ss -tln` sin nada nuevo en 0.0.0.0
+- [ ] C4 Desde la Mac: `https://homelab.<tailnet>.ts.net/` health + `/ui/` carga + /predict paridad
+- [ ] C5 Verificar ACL: el acceso depende de la policy (cualquier device nuevo sin grant no entra)
+- [ ] C6 Mac intacta: manifest de baseline idéntico (salvo archivos del scope)
+
+## Review
+_(llenar al ejecutar)_
+
+---
+
 # Plan: Refactor Completo del MMA Fight Predictor
 
 > Objetivo del refactor (definido por el usuario, 2026-07-01):

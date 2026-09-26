@@ -1,0 +1,16 @@
+venv/
+api/venv/
+.git/
+.pytest_cache/
+**/__pycache__/
+**/*.pyc
+api/.env
+.env
+data/
+models/
+tasks/
+.claude/
+.collab/
+docs/
+.DS_Store
+dump.rdb

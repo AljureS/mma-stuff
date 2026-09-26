@@ -7,3 +7,6 @@ __pycache__/
 .DS_Store
 dump.rdb
 tasks/baselines/
+
+# Logs crudos de Codex (pueden contener secretos leídos del workspace)
+.collab/delegations/*-stdout.log

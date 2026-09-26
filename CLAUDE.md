@@ -16,7 +16,7 @@ Sistema de predicción de peleas de MMA: una API FastAPI que compara las estadí
 Proyecto en **fase de desarrollo/prototipo**, tras el **refactor de limpieza 2026-07-01** (ver `tasks/todo.md`): se eliminaron ~1,600 LOC de código muerto/placeholder (ml_system.py, deployment_setup.sh, database_schema.sql, endpoints falsos, 8 dependencias sin uso) y se corrigieron los bugs de cache key y del buscador.
 
 **Implementado y funcional:**
-- API FastAPI (`api/main.py`, 590 LOC) con cache Redis (key normalizada) y validación Pydantic — 5 endpoints, todos reales
+- API FastAPI (`api/main.py`, 599 LOC) con cache Redis (key normalizada) y validación Pydantic — 5 endpoints reales + frontend estático en `/ui`
 - Cliente LLM con fallback OpenAI → Ollama, reintentos, circuit breakers (`api/llm_client.py`) + 15 tests unitarios
 - Scraping automático de UFCStats cuando un peleador no existe en el CSV o sus datos tienen >7 días (`get_fighter_data` en `main.py` → `MMADataCollector.search_and_scrape_fighter`)
 - Frontend HTML/JS/Tailwind que consume la API (rediseño Fight Night 2026-07)
@@ -27,7 +27,7 @@ Proyecto en **fase de desarrollo/prototipo**, tras el **refactor de limpieza 202
 
 **Issues conocidos:**
 - El scraper de UFCStats devuelve 0 filas (detectado 2026-07-01: el HTML del sitio cambió o bloquea requests). El fallback a datos stale del CSV funciona por diseño, así que la API opera normal; arreglar el parser es pendiente.
-- Redis (`localhost:6379`) y uvicorn (`0.0.0.0:8000`) siguen hardcodeados (no leen el .env).
+- Uvicorn (`0.0.0.0:8000`) sigue hardcodeado en `python main.py` (no lee `API_HOST`/`API_PORT`). Redis ya lee `REDIS_URL` (2026-09-26).
 
 **Eliminado en el refactor 2026-07-01** (recuperable vía git si algún día se implementa de verdad): `api/ml_system.py`, `database_schema.sql`, `scripts/deployment_setup.sh`, `POST /retrain` (no-op), `GET /events/upcoming` (hardcodeado), `GET /analytics/*` ×2 (hardcodeados), `get_betting_insights()` (odds falsas), `get_recent_form()`/`get_current_ranking()` (valores inventados), deps psycopg2/structlog/python-jose/passlib/selenium/webdriver-manager/lxml/python-multipart, y el JS inline duplicado del frontend.
 
@@ -46,10 +46,14 @@ mma-stuff/
 │   ├── lessons.md                 # Correcciones del usuario y reglas aprendidas
 │   └── baselines/                 # Respuestas de referencia pre-refactor (gitignored)
 ├── README.md                      # Entry point conciso (reescrito 2026-07-01)
+├── Dockerfile                     # Imagen de la API (python:3.11-slim + libgomp1), deploy homelab 2026-09
+├── compose.yaml                   # api (127.0.0.1:8000) + redis interno; data rw / models ro montados
+├── .dockerignore                  # Excluye .env, data/, models/, venv/, tasks/, .claude/, .collab/
+├── .collab/                       # Briefs y registros de delegación Muad'Dib → HalJordan (Codex)
 ├── README_LLM.md                  # Doc del sistema LLM
 ├── test_scraping.py               # Script manual de prueba del scraper
 ├── api/
-│   ├── main.py                    # Servidor FastAPI (toda la API + feature engineering, 590 LOC)
+│   ├── main.py                    # Servidor FastAPI (toda la API + feature engineering, 599 LOC)
 │   ├── llm_client.py              # Cliente LLM con fallback OpenAI → Ollama
 │   ├── requirements.txt           # 16 dependencias Python (podado 2026-07-01)
 │   └── .env                       # Variables de entorno (gitignored, NO commitear)
@@ -62,7 +66,7 @@ mma-stuff/
 │   └── mma_prediction_model.pkl   # Modelo XGBoost (actualmente dummy)
 ├── frontend/
 │   ├── index.html                 # UI Fight Night (Tailwind CDN, Chart.js CDN, Font Awesome CDN)
-│   ├── index.js                   # Lógica del cliente (API_BASE_URL = http://localhost:8000)
+│   ├── index.js                   # Lógica del cliente (API_BASE_URL = mismo origen; localhost:8000 en :3000/file://)
 │   └── styles.css                 # Estilos custom del tema
 └── tests/
     ├── __init__.py
@@ -82,6 +86,7 @@ Borrados en el refactor 2026-07-01: `ARCHITECTURE.md`, `IMPLEMENTATION_SUMMARY.m
 | `GET /fighter/{name}` | Real | Stats del CSV (NaN→None); `ranking` sale de la columna `ranking` del CSV (null si falta); ya no existe `recent_form` |
 | `GET /search/fighters/{query}` | Real | Búsqueda fuzzy (`str.contains`, case-insensitive) sobre el CSV, `limit` default 10. Fix 2026-07-01: sanitiza NaN (antes devolvía 500) |
 | `GET /health/llm` | Real | Estado de proveedores LLM y circuit breakers |
+| `GET /ui/` | Real (estático) | Sirve `frontend/` con `StaticFiles` (mismo origen que la API; se monta solo si existe el directorio). Añadido 2026-09-26 para el deploy detrás de `tailscale serve` |
 
 Eliminados 2026-07-01 (devuelven 404): `POST /retrain`, `GET /events/upcoming`, `GET /analytics/model-performance`, `GET /analytics/betting-roi`.
 
@@ -125,9 +130,9 @@ Helpers de sanitización: `_nan_to_none()` y `_sanitize_csv_record()` (main.py) 
 
 ### Infraestructura del servidor
 
-- Redis: **hardcodeado** `localhost:6379` db 0 (la variable `REDIS_URL` del .env no se lee).
-- Uvicorn: **hardcodeado** `0.0.0.0:8000` (las variables `API_HOST`/`API_PORT` no se leen). Reload activo si se pasa `--reload` o existe env `DEBUG`.
-- CORS: `allow_origins=["*"]` (restringir en producción).
+- Redis: `redis.Redis.from_url(REDIS_URL)` con default `redis://localhost:6379/0` (desde 2026-09-26). En Docker, `compose.yaml` lo pisa con `redis://redis:6379/0`.
+- Uvicorn: **hardcodeado** `0.0.0.0:8000` en `python main.py` (las variables `API_HOST`/`API_PORT` no se leen). Reload activo si se pasa `--reload` o existe env `DEBUG`. En Docker el `CMD` llama a `uvicorn main:app --app-dir /app/api` directo (sin reload aunque el .env tenga `DEBUG=true`).
+- CORS: `allow_origins` desde `CORS_ORIGINS` (lista por comas, default `http://localhost:3000,http://127.0.0.1:3000`) — restringido 2026-09-26 (antes `*`: cualquier web abierta podía gastar la key de OpenAI vía `/predict`). Servido desde `/ui/` es mismo origen y no necesita CORS; abrir `index.html` con `file://` ya no funciona (usar :3000).
 - Startup: carga `models/mma_prediction_model.pkl` y `data/fighters_complete.csv` con rutas relativas a la raíz del proyecto (`Path(__file__).parent.parent`).
 - `main.py` agrega `scripts/` al `sys.path` para importar `data_collection`.
 
@@ -181,7 +186,7 @@ Prueba manual del scraper: `python test_scraping.py` (busca a Mateusz Gamrot).
 UI rediseñada 2026-07-01 con el design system **Fight Night** (ver skill `mma-ui-theme`: tokens arena/corner/gold/canvas, Barlow Condensed + Inter por Google Fonts, corners rojo/azul, oro solo para title fight).
 
 - `index.html` (258 LOC): header cartelera, matchup con corner rojo | VS | corner azul, opciones (peso/evento/checkbox title fight con badge dorado), `resultsSection` (banner de ganador con glow de corner, chart, key factors, análisis de esquina), `loadingModal` con octágono girando. Config de Tailwind inline con los tokens. **El bloque JS inline duplicado fue eliminado** — `index.js` es la única fuente (antes el inline era la copia viva: el externo moría en parse por redeclarar `API_BASE_URL`).
-- `index.js` (271 LOC): `API_BASE_URL = 'http://localhost:8000'`. Consume SOLO `POST /predict` (siempre `include_llm_analysis: true`) y `GET /search/fighters/` (debounce 500ms). Doughnut con colores de corner, key factors con iconos y color según a quién favorecen (signo del diff, ver skill), banner de ganador (`winnerBanner`/`titleBeltNote` — title fight se toma del request, no viene en la respuesta). Patrón destroy-antes-de-recrear del chart.
+- `index.js` (273 LOC): `API_BASE_URL` = `window.location.origin`, salvo `file:` o puerto 3000 (dev local) → `'http://localhost:8000'`. Así funciona igual servido por `python -m http.server 3000` o desde la API en `/ui/`. Consume SOLO `POST /predict` (siempre `include_llm_analysis: true`) y `GET /search/fighters/` (debounce 500ms). Doughnut con colores de corner, key factors con iconos y color según a quién favorecen (signo del diff, ver skill), banner de ganador (`winnerBanner`/`titleBeltNote` — title fight se toma del request, no viene en la respuesta). Patrón destroy-antes-de-recrear del chart.
 - `styles.css` (192 LOC): componentes custom del tema — spinner octágono (clip-path + conic-gradient), glows de ganador por corner/oro, clases dinámicas que el JS aplica (`.winner-*`, `.factor-*`; van aquí y no como utilidades Tailwind por el CDN).
 
 Los IDs del DOM son contrato con `index.js` — la lista completa vive en la skill `mma-ui-theme` (reglas de compatibilidad).
@@ -210,9 +215,11 @@ OLLAMA_MODEL=qwen2.5:7b
 LLM_MAX_RETRIES=3
 LLM_TIMEOUT=180                               # Aplica SOLO a Ollama (OpenAI fijo en 30s)
 DEBUG=                                        # Si existe, uvicorn corre con reload
+REDIS_URL=redis://localhost:6379             # Leída desde 2026-09-26 (default redis://localhost:6379/0)
+CORS_ORIGINS=                                 # Opcional; default http://localhost:3000,http://127.0.0.1:3000
 ```
 
-Presentes en `.env` pero **no leídas por el código** (reservadas para producción): `DATABASE_URL`, `REDIS_URL`, `API_HOST`, `API_PORT`, `SECRET_KEY`, `LOG_LEVEL`, `ENVIRONMENT`. No existe `.env.example` (está gitignored); para reproducir el .env usa la lista de arriba.
+Presentes en `.env` pero **no leídas por el código** (reservadas para producción): `DATABASE_URL`, `API_HOST`, `API_PORT`, `SECRET_KEY`, `LOG_LEVEL`, `ENVIRONMENT`. No existe `.env.example` (está gitignored); para reproducir el .env usa la lista de arriba.
 
 ## Cómo Ejecutar
 
@@ -241,6 +248,26 @@ curl http://localhost:8000/health/llm  # estado LLM
 
 (El script de deployment Linux `deployment_setup.sh` se eliminó 2026-07-01: configuraba PostgreSQL/Nginx/Systemd que el código no usa.)
 
+## Deploy en el Home Lab (Tailscale, 2026-09-26)
+
+Copia (no movimiento) del proyecto al homelab (`simon@homelab`, Debian 13, 6 GB RAM) accesible SOLO dentro del tailnet. Plan, checklist con evidencia y verificador en `tasks/todo.md` y `tasks/deploy/`.
+
+```
+MacBook ──HTTPS (tailnet)──> tailscale serve (homelab:443) ──> 127.0.0.1:8000 api (docker)
+                                                               ├─ /     health
+                                                               ├─ /ui/  frontend
+                                                               └─ redis (red interna, sin puerto publicado)
+```
+
+- Ubicación en el server: `~/apps/mma-stuff/` (sin venv/.git; `api/.env` copiado aparte con `chmod 600`).
+- Levantar/actualizar: `rsync` desde la Mac (sin `--delete`) + `docker compose up -d --build` en el server. Sin Ollama (qwen2.5:7b no cabe): LLM solo OpenAI.
+- Exposición: `tailscale serve --bg 8000` (NUNCA `funnel`, nunca puertos en `0.0.0.0`). URL: `https://homelab.<tailnet>.ts.net/ui/`.
+- Quién entra: policy del tailnet en `tasks/deploy/tailnet-policy.hujson` (grant por device: solo el MacBook → homelab tcp:443/22). Agregar un device = sumarlo a `hosts` y al `src` del grant.
+- Prerrequisitos del server (sudo, los corre el owner): `tasks/deploy/mma_prereqs.sh` (Docker oficial, rsync, grupo docker, `tailscale set --operator=simon`, tapa sin suspender).
+- Healthchecks: redis con `redis-cli ping`; api sana solo si `models_loaded`, `fighters_count>0` y Redis responde (`depends_on: service_healthy`).
+- **Incidente 2026-09-26:** `api/.env` estaba trackeado en git y pusheado a `origin/main` (repo público). Se des-trackeó (`git rm --cached`, el archivo sigue en disco). Las credenciales de ese archivo deben rotarse; purgar el historial remoto es decisión del owner.
+- Verificador del plan: `tasks/deploy/verify_plan.sh` (lo corre un /loop durante la ejecución): Mac intacta vs manifest, diff en scope, nada en 0.0.0.0 en el server, funnel apagado, items marcados solo con evidencia en `tasks/deploy/evidence/`.
+
 ## Tests
 
 ```bash
@@ -262,7 +289,7 @@ Los tests del LLM mockean OpenAI y aiohttp (pytest-asyncio + pytest-mock). No ha
 1. **Entrenar un modelo real**: el pkl actual es dummy. Requiere construir un dataset de peleas históricas (no existe `training_data.csv`). Las 16 features objetivo e hiperparámetros de referencia están documentados al final de "Componente 3".
 2. **Cerrar la brecha de features**: `main.py` calcula 10 de 16 features; implementar los scores compuestos, forma reciente, calidad de oponentes y style matchup en el flujo de la API (junto con el punto 1).
 3. **Arreglar el parser del scraper**: UFCStats devuelve 0 filas desde ~2026-07 (cambio de HTML o bloqueo); hoy la API vive de los datos stale del CSV.
-4. Parametrizar Redis y uvicorn por variables de entorno (hoy hardcodeados).
+4. Parametrizar uvicorn por variables de entorno en `python main.py` (hoy hardcodeado; Redis ya lee `REDIS_URL`).
 
 ## Workflow Orchestration (cómo trabajar en este proyecto)
 
