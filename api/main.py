@@ -7,7 +7,7 @@ import asyncio
 import pickle
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import date, datetime, timedelta
 import logging
 import redis
 import json
@@ -29,6 +29,21 @@ load_dotenv()
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %s", name, value, default)
+        return default
+
+
+FIGHTER_MAX_AGE_HOURS = _float_env('FIGHTER_MAX_AGE_HOURS', 24.0)
+FIGHTER_MIN_RECHECK_MINUTES = _float_env('FIGHTER_MIN_RECHECK_MINUTES', 30.0)
 
 app = FastAPI(
     title="MMA Fight Prediction API",
@@ -76,6 +91,7 @@ class FightPredictionRequest(BaseModel):
     weight_class: Optional[str] = None
     title_fight: bool = False
     include_llm_analysis: bool = True
+    force_refresh: bool = False
 
 class FightPredictionResponse(BaseModel):
     fighter_a: str
@@ -93,6 +109,9 @@ class FighterStatsResponse(BaseModel):
     record: str
     stats: Dict
     ranking: Optional[int] = None
+    last_updated: Optional[str] = None
+    next_fight_date: Optional[str] = None
+    data_age_seconds: Optional[float] = None
 
 @app.on_event("startup")
 async def load_models():
@@ -139,30 +158,12 @@ async def predict_fight(request: FightPredictionRequest):
         raise HTTPException(status_code=503, detail="Prediction model not loaded")
     
     try:
-        # Check cache first (key normalizada: sin distinguir orden a/b ni casing)
-        cache_key = _normalize_cache_key(request.fighter_a, request.fighter_b)
-        try:
-            # Cliente Redis síncrono: fuera del event loop para que un Redis colgado no congele /search
-            cached_result = await run_in_threadpool(redis_client.get, cache_key)
-        except redis.RedisError as e:
-            logger.warning("Redis cache read failed: %s", e)
-            cached_result = None
-
-        if cached_result:
-            cached = json.loads(cached_result)
-            # El payload cacheado depende del orden a/b del request original;
-            # si este request viene con el orden invertido, transformar antes de responder
-            if cached['fighter_a'].strip().lower() != request.fighter_a.strip().lower():
-                cached = _swap_cached_prediction(cached)
-            logger.info(f"Returning cached prediction for {request.fighter_a} vs {request.fighter_b}")
-            return FightPredictionResponse(**cached)
-        
         # Validar que los luchadores existen
         logger.info(f"Searching for fighter_a: '{request.fighter_a}'")
         logger.info(f"Searching for fighter_b: '{request.fighter_b}'")
         fighter_a_data, fighter_b_data = await asyncio.gather(
-            run_in_threadpool(get_fighter_data, request.fighter_a),
-            run_in_threadpool(get_fighter_data, request.fighter_b),
+            run_in_threadpool(get_fighter_data, request.fighter_a, request.force_refresh),
+            run_in_threadpool(get_fighter_data, request.fighter_b, request.force_refresh),
         )
 
         # Validación detallada
@@ -179,6 +180,26 @@ async def predict_fight(request: FightPredictionRequest):
                 status_code=404,
                 detail=f"Fighter(s) not found in database: {', '.join(missing_fighters)}. Please check spelling or add fighter to database."
             )
+
+        stamp_a = str(_nan_to_none(fighter_a_data.get('last_updated')) or '')
+        stamp_b = str(_nan_to_none(fighter_b_data.get('last_updated')) or '')
+        cache_key = _normalize_cache_key(request.fighter_a, request.fighter_b, stamp_a, stamp_b,
+                                         request.title_fight, request.include_llm_analysis)
+        try:
+            # Cliente Redis síncrono: fuera del event loop para que un Redis colgado no congele /search
+            cached_result = await run_in_threadpool(redis_client.get, cache_key)
+        except redis.RedisError as e:
+            logger.warning("Redis cache read failed: %s", e)
+            cached_result = None
+
+        if cached_result:
+            cached = json.loads(cached_result)
+            # El payload cacheado depende del orden a/b del request original;
+            # si este request viene con el orden invertido, transformar antes de responder
+            if cached['fighter_a'].strip().lower() != request.fighter_a.strip().lower():
+                cached = _swap_cached_prediction(cached)
+            logger.info(f"Returning cached prediction for {request.fighter_a} vs {request.fighter_b}")
+            return FightPredictionResponse(**cached)
         
         # Engineer features
         features = engineer_fight_features(fighter_a_data, fighter_b_data, request)
@@ -223,10 +244,10 @@ async def predict_fight(request: FightPredictionRequest):
         raise HTTPException(status_code=500, detail=f"Error making prediction: {str(e)}")
 
 @app.get("/fighter/{fighter_name}", response_model=FighterStatsResponse, tags=["Fighters"])
-async def get_fighter_stats(fighter_name: str):
+async def get_fighter_stats(fighter_name: str, refresh: bool = False):
     """Obtener estadísticas completas de un luchador"""
     
-    fighter_data = await run_in_threadpool(get_fighter_data, fighter_name)
+    fighter_data = await run_in_threadpool(get_fighter_data, fighter_name, refresh)
     
     if not fighter_data:
         raise HTTPException(status_code=404, detail=f"Fighter '{fighter_name}' not found")
@@ -238,11 +259,18 @@ async def get_fighter_stats(fighter_name: str):
     ranking_value = _nan_to_none(fighter_data.get('ranking'))
     ranking = int(ranking_value) if ranking_value is not None else None
 
+    last_updated = _nan_to_none(fighter_data.get('last_updated'))
+    updated_at = _parse_last_updated(last_updated)
+    data_age_seconds = (datetime.now() - updated_at).total_seconds() if updated_at else None
+
     return FighterStatsResponse(
         name=fighter_data['name'],
         record=record,
         stats=_sanitize_csv_record(fighter_data),
-        ranking=ranking
+        ranking=ranking,
+        last_updated=last_updated,
+        next_fight_date=_nan_to_none(fighter_data.get('next_fight_date')),
+        data_age_seconds=data_age_seconds,
     )
 
 @app.get("/search/fighters/{query}", tags=["Search"])
@@ -293,10 +321,14 @@ async def llm_health_check():
 
 # Funciones auxiliares
 
-def _normalize_cache_key(fighter_a: str, fighter_b: str) -> str:
-    """Cache key de predicción independiente del orden a/b, casing y espacios"""
-    names = sorted([fighter_a.strip().lower(), fighter_b.strip().lower()])
-    return f"prediction:{names[0]}:{names[1]}"
+def _normalize_cache_key(fighter_a: str, fighter_b: str, stamp_a: str = '', stamp_b: str = '',
+                         title_fight: bool = False, include_llm_analysis: bool = True) -> str:
+    """Cache key independiente del orden a/b, ligada a la versión de ambos datos (last_updated)
+    y a las opciones del request que cambian la respuesta (title_fight es una feature del modelo;
+    include_llm_analysis decide si llm_analysis viene o es null)."""
+    pairs = sorted([(fighter_a.strip().lower(), stamp_a), (fighter_b.strip().lower(), stamp_b)])
+    return (f"prediction:{pairs[0][0]}:{pairs[1][0]}:{pairs[0][1]}:{pairs[1][1]}"
+            f":title={int(bool(title_fight))}:llm={int(bool(include_llm_analysis))}")
 
 
 def _swap_cached_prediction(cached: Dict) -> Dict:
@@ -331,8 +363,8 @@ def _sanitize_csv_record(record: Dict) -> Dict:
     return {key: _nan_to_none(value) for key, value in record.items()}
 
 
-def get_fighter_data(fighter_name: str) -> Optional[Dict]:
-    """Obtener datos de un luchador con scraping automático y cache inteligente (7 días)"""
+def get_fighter_data(fighter_name: str, force_refresh: bool = False) -> Optional[Dict]:
+    """Obtener datos de un luchador, reconsultando UFCStats cuando haga falta."""
     global fighter_database
 
     if fighter_database is None:
@@ -341,36 +373,34 @@ def get_fighter_data(fighter_name: str) -> Optional[Dict]:
     # 1. Buscar en CSV (cache local)
     fighter = _search_in_database(fighter_name)
 
-    # 2. Verificar frescura de datos (< 7 días)
-    if fighter and _is_data_fresh(fighter, days=7):
-        logger.info(f"Using cached data for '{fighter_name}' (fresh)")
+    reason = ('not found' if not fighter else
+              'forced refresh' if force_refresh else
+              'stale' if not _is_data_fresh(fighter) else None)
+    if reason is None:
+        logger.info("Using cached data for '%s' (fresh)", fighter_name)
         return fighter
 
-    # 3. Si no existe O está desactualizado, scrapear
-    if not fighter or not _is_data_fresh(fighter, days=7):
-        action = "not found" if not fighter else "stale (>7 days)"
-        logger.info(f"Fighter '{fighter_name}' {action}, attempting web scraping...")
+    logger.info("Fighter '%s' %s, attempting web scraping...", fighter_name, reason)
+    try:
+        from data_collection import MMADataCollector
 
-        try:
-            from data_collection import MMADataCollector
+        collector = MMADataCollector()
+        fresh_data = collector.search_and_scrape_fighter(fighter_name)
 
-            collector = MMADataCollector()
-            fresh_data = collector.search_and_scrape_fighter(fighter_name)
+        if fresh_data:
+            logger.info(f"Successfully scraped data for '{fighter_name}'")
+            with _csv_lock:
+                # 4. Actualizar/agregar al CSV
+                _update_or_add_to_csv(fresh_data)
+                # 5. Recargar fighter_database en memoria
+                _reload_fighter_database()
+            # 6. Retornar datos frescos por el nombre canónico de UFCStats (match exacto garantizado)
+            return _search_in_database(fresh_data['name'])
+        else:
+            logger.warning(f"Web scraping failed for '{fighter_name}'")
 
-            if fresh_data:
-                logger.info(f"Successfully scraped data for '{fighter_name}'")
-                with _csv_lock:
-                    # 4. Actualizar/agregar al CSV
-                    _update_or_add_to_csv(fresh_data)
-                    # 5. Recargar fighter_database en memoria
-                    _reload_fighter_database()
-                # 6. Retornar datos frescos por el nombre canónico de UFCStats (match exacto garantizado)
-                return _search_in_database(fresh_data['name'])
-            else:
-                logger.warning(f"Web scraping failed for '{fighter_name}'")
-
-        except Exception as e:
-            logger.error(f"Error during web scraping: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Error during web scraping: {e}", exc_info=True)
 
     # 7. Fallback: retornar datos viejos si scraping falla
     if fighter:
@@ -415,26 +445,55 @@ def _search_in_database(fighter_name: str) -> Optional[Dict]:
     return None
 
 
-def _is_data_fresh(fighter: Dict, days: int = 7) -> bool:
-    """Verificar si los datos tienen menos de N días"""
-    last_updated = fighter.get('last_updated')
+def _parse_last_updated(value) -> Optional[datetime]:
+    """last_updated del CSV -> datetime naive en hora local del servidor (o None).
+    Todo el sistema compara contra datetime.now() (naive): un ISO con zona se convierte
+    a hora local y se le quita el tzinfo en vez de romper la resta con TypeError."""
+    value = _nan_to_none(value)
+    try:
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                value = value.astimezone().replace(tzinfo=None)
+            return value
+    except ValueError:
+        pass
+    return None
 
-    if not last_updated:
-        # Si no tiene timestamp, asumir que es viejo
+
+def _is_data_fresh(fighter: Dict) -> bool:
+    """Verificar antigüedad y si ya pasó la próxima pelea registrada."""
+    last_updated = _parse_last_updated(fighter.get('last_updated'))
+    if last_updated is None:
         return False
 
     try:
-        if isinstance(last_updated, str):
-            last_updated_date = datetime.fromisoformat(last_updated)
-        else:
-            last_updated_date = last_updated
-
-        age_days = (datetime.now() - last_updated_date).days
-        return age_days < days
-
-    except Exception as e:
-        logger.warning(f"Could not parse last_updated: {e}")
+        age = datetime.now() - last_updated
+    except TypeError:
+        logger.warning("Could not compare last_updated for %s", fighter.get('name'))
         return False
+
+    if age < timedelta(0):
+        # CSV escrito por otro host/zona horaria (p. ej. homelab en UTC leído en hora local):
+        # no se puede razonar sobre su edad, mejor re-leer UFCStats que fiarse del piso.
+        logger.info("%s has last_updated in the future (%s): treating as stale", fighter.get('name'), last_updated)
+        return False
+
+    if age < timedelta(minutes=FIGHTER_MIN_RECHECK_MINUTES):
+        return True
+
+    next_fight_date = _nan_to_none(fighter.get('next_fight_date'))
+    if isinstance(next_fight_date, str):
+        try:
+            fight_date = date.fromisoformat(next_fight_date)
+        except ValueError:
+            fight_date = None
+        if fight_date is not None and fight_date < date.today():
+            logger.info("%s fought on %s after last update: stale", fighter.get('name'), fight_date)
+            return False
+
+    return age < timedelta(hours=FIGHTER_MAX_AGE_HOURS)
 
 
 def _update_or_add_to_csv(fighter_data: Dict):
@@ -448,6 +507,8 @@ def _update_or_add_to_csv(fighter_data: Dict):
 
     # Leer CSV actual
     df = pd.read_csv(csv_path)
+    if 'next_fight_date' not in df.columns:
+        df['next_fight_date'] = None
 
     # Verificar si ya existe
     existing_index = df[df['name'] == fighter_data['name']].index

@@ -1,3 +1,39 @@
+# Plan: Frescura de datos de peleadores (2026-09-26, noche)
+
+Reporte del owner: la UI muestra a Raul Rosas Jr. 12-1-0 cuando "en este momento tiene una pelea ganada extra" (peleó esta noche vs Raoni Barcelos, UFC Fight Night 26-sep-2026).
+
+## Diagnóstico (Muad'Dib, verificado en vivo ~20:50)
+- UFCStats todavía publica `Record: 12-1-0` y muestra la pelea de hoy como `next` en el perfil → la fuente no tiene el resultado aún; ningún cambio de código puede mostrar 13-1-0 antes de que UFCStats actualice.
+- Pero cuando actualice, la app lo ocultaría: CSV "fresco" 7 días (`_is_data_fresh(days=7)`), Redis 1 h con una key que no depende de los datos, `/search` (lo que ve la UI bajo el input) nunca scrapea, y no existe refresh manual.
+- Además el parser de `fight_history` mapeaba mal las columnas (`'event': '00', 'date': '810'`): la app no sabía que el peleador tenía una pelea programada.
+
+## Fase 1 — Backend (HalJordan, brief `.collab/briefs/fighter-freshness-backend.md`)
+- [x] Parser de historial correcto + `next_fight_date` desde la fila `next` del perfil.
+- [x] Frescura por reglas: piso `FIGHTER_MIN_RECHECK_MINUTES` (30), stale si `next_fight_date < hoy`, techo `FIGHTER_MAX_AGE_HOURS` (24; antes 7 días fijos).
+- [x] `GET /fighter/{name}?refresh=true` y `force_refresh` en `/predict`; respuesta de `/fighter` con `last_updated`, `next_fight_date`, `data_age_seconds`.
+- [x] Cache de `/predict` keyed por `last_updated` de ambos peleadores (se invalida sola al refrescar datos).
+- [x] Tests: parser (fixture Rosas Jr.), reglas de frescura, force refresh, cache key, esquema CSV.
+
+## Fase 2 — Frontend (Muad'Dib, skill `mma-ui-theme`)
+- [x] Al resolver un peleador (exacto/único/seleccionado) llamar `GET /fighter/{name}` para pasar por las reglas de frescura y mostrar "Datos de UFCStats: hace X".
+- [x] Botón "Actualizar" por corner → `?refresh=true` (spinner, récord y sello nuevos, errores inline).
+- [x] Aviso "pelea hoy" cuando `next_fight_date` es hoy.
+
+## Fase 3 — Cierre
+- [x] pytest completo verde (67); API reiniciada; `curl '/fighter/Raul%20Rosas%20Jr.?refresh=true'` re-scrapea (4.2 s) y devuelve `next_fight_date: 2026-09-26`; `/predict` sin LLM cambia de key al refrescar (y por `title_fight`/`include_llm_analysis`); smoke en Chrome (verificación al resolver + botón "Actualizar").
+- [x] Review de HalJordan sobre el diff completo → consenso (R1 BLOCKERS → R2 BLOCKERS → R3 NO BLOCKERS + confirmación) → commit (identidad del owner, sin trailers).
+- [x] CLAUDE.md → AGENTS.md sincronizados; skill `mma-ui-theme` (contrato de IDs) y `tasks/lessons.md` actualizados; memoria actualizada.
+
+**Review (gate de consenso Muad'Dib ↔ HalJordan):**
+- Ejecución backend: HalJordan, registro `.collab/delegations/20260927T022305Z-*` (63 tests verdes, `import main` OK). Frontend + docs: Muad'Dib. Verificación en vivo (Muad'Dib): `?refresh=true` re-scrapea en 4.2 s y guarda `next_fight_date=2026-09-26`; CSV con la columna nueva; key de Redis con stamps; botón "Actualizar" en Chrome → "hace un momento · pelea hoy".
+- R1 (`.collab/briefs/fighter-freshness-review.md`, registro `20260927T023405Z`): **BLOCKERS** — HIGH key de cache sin `title_fight`/`include_llm_analysis` (preexistente, pero se corrige ya que se rehacía la key); HIGH carrera de `verifiedName` en el frontend (volver al mismo nombre con la verificación en vuelo la saltaba y dejaba el spinner); MEDIUM `last_updated` futuro tratado como fresco; MEDIUM ISO con zona → 500 en `/fighter`; MEDIUM respuesta sin sello dejaba el botón deshabilitado; LOW fechas del parametrize fijadas en la recolección. Los 6 corregidos por Muad'Dib (key `:title=:llm=`, `verifyingName`/`verifySeq`, edad negativa → stale, normalización a hora local naive, `applyFighterResponse` siempre cierra el loading, offsets de días dentro del test) → 67 tests verdes, keys distintas en Redis para title_fight false/true.
+- R2 (`.collab/briefs/fighter-freshness-review-r2.md`, registro `20260927T024328Z`): **BLOCKERS** — 5 de 6 resueltos; queda 1 HIGH: verificar X, pasar a Y y volver a X con Y en vuelo dejaba el sello en "Verificando…" (X seguía marcado como verificado). Fix Muad'Dib: `verifiedName` se invalida al empezar a verificar otro peleador (volver a X re-consulta `/fighter`, ms si está fresco).
+- R3 (`.collab/briefs/fighter-freshness-review-r3.md`, registro `20260927T024809Z`): **NO BLOCKERS** sobre el fix del HIGH de R2. Mientras corría, Muad'Dib detectó en autorevisión un caso análogo (refresh en vuelo + reescribir el mismo nombre → la verificación se saltaba y el sello quedaba en "Actualizando…") y aplicó un fix de una línea (`refreshFighter` invalida `verifiedName` al empezar) DESPUÉS del veredicto; se pidió a HalJordan una confirmación acotada a esa línea (`.collab/briefs/fighter-freshness-review-r3-confirm.md`, registro `20260927T025102Z`): **NO BLOCKERS** (7 escenarios resueltos).
+- **Consenso alcanzado** (tests: 67 passed corridos por Muad'Dib sobre el árbol final; review sin bloqueantes sobre el diff final) → commit con la identidad del owner, solo los archivos de esta tarea (los de la tarea gpt-6-luna en curso quedan fuera: `api/llm_client.py`, `tests/test_llm_client.py`, `README*`, sus hunks de `CLAUDE.md`/`AGENTS.md`/`tasks/todo.md`). Ningún run de Codex quedó activo. En vivo, tras publicar UFCStats el resultado, el botón "Actualizar" mostró 13-1-0 para Rosas Jr. y 22-6-0 para Barcelos.
+- Pendiente del owner: redeploy al homelab (`rsync` + `docker compose up -d --build`; el `.env` del server puede fijar `FIGHTER_MAX_AGE_HOURS`/`FIGHTER_MIN_RECHECK_MINUTES`) y push.
+
+---
+
 # Plan: Búsqueda/carga de peleadores — concurrencia + scraper + UI (2026-09-26)
 
 **Síntoma reportado (owner):** "no encuentro a los peleadores (probar con las peleas de hoy), y aunque aparezcan no cargan bien".

@@ -12,6 +12,10 @@
 - (2026-09-26) Los logs crudos de Codex (`.collab/delegations/*-stdout.log`) pueden contener secretos que Codex leyó del workspace (pasó con la key de OpenAI). Están en .gitignore; antes de commitear `.collab/`, verificar por VALOR que ningún valor de `api/.env` aparece.
 - (2026-09-26) `api/.env` estuvo trackeado y pusheado a un repo público pese a `.env` en .gitignore (se agregó antes de la regla). Chequear `git ls-files | grep .env` en cualquier auditoría.
 
+- (2026-09-26, noche) `codex_delegate.sh --out <archivo> --json` dejó el archivo vacío y NO escribió `*-last-message.md`: el reporte final de Codex hay que sacarlo del `*-stdout.log` (JSONL: último evento `item.completed` con `item.type == "agent_message"`). Invocar el wrapper sin `--out/--json` para que el registro quede completo.
+- (2026-09-26, noche) Claude in Chrome: en un `browser_batch`, un `left_click` + `type` inmediatamente después de `navigate` se pierde (la página sigue cargando). Meter un `wait` de ~1 s tras `navigate` y otro tras el click antes de tipear; el tracking de network/console arranca al primer read, así que leerlos una vez antes de la acción que se quiere observar.
+- (2026-09-26, noche) Otro agente (Codex app del owner, tarea gpt-6-luna) puede estar editando el mismo working tree en paralelo: antes de commitear, separar hunks por tarea (blobs `HEAD + solo mis ediciones` vía `git hash-object -w` + `git update-index --cacheinfo`) y NO incluir archivos ajenos; anclar las ediciones de docs con reemplazos exactos (script que aborta si un anchor no es único) para no pisar las suyas.
+
 ## Correcciones
 
 - (2026-09-26) Usé `~/.ssh/id_ed25519` para el homelab sin revisar su comentario: es la llave del correo de TRABAJO (code@primecredential.com). **Regla:** el homelab es personal. Usar solo `~/.ssh/id_ed25519_homelab` (comentario saidsimon2@gmail.com) con `-o IdentitiesOnly=yes`; antes de proponer cualquier llave o identidad, leer su comentario/email y confirmar que corresponde al contexto (personal vs trabajo).

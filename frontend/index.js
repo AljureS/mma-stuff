@@ -11,9 +11,13 @@ let probabilityChart = null;
 // respuestas que llegan fuera de orden) y sugerencias visibles. Antes había un solo
 // timer compartido: escribir en el corner azul cancelaba la búsqueda del rojo, y una
 // respuesta lenta podía pisar a una más nueva.
+// verifiedName: nombre canónico ya verificado con GET /fighter y aún resuelto (no repetir la llamada por tecla;
+// se invalida en cuanto empieza la verificación de OTRO peleador);
+// verifyingName/verifySeq: verificación EN VUELO y la secuencia que la espera (si el usuario vuelve al
+// mismo nombre antes de la respuesta, se adopta la llamada en curso en vez de saltarla o duplicarla).
 const searchState = {
-    fighterA: { timer: null, seq: 0, suggestions: [], activeIndex: -1 },
-    fighterB: { timer: null, seq: 0, suggestions: [], activeIndex: -1 }
+    fighterA: { timer: null, seq: 0, suggestions: [], activeIndex: -1, verifiedName: null, verifyingName: null, verifySeq: 0 },
+    fighterB: { timer: null, seq: 0, suggestions: [], activeIndex: -1, verifiedName: null, verifyingName: null, verifySeq: 0 }
 };
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_LIMIT = 8;
@@ -68,6 +72,11 @@ function initializeEventListeners() {
     document.querySelectorAll('.lookup-btn').forEach(btn => {
         btn.addEventListener('click', () => lookupFighterOnUfcStats(btn.dataset.input));
     });
+
+    // Botones "Actualizar": re-scrape forzado del perfil en UFCStats (GET /fighter/{name}?refresh=true)
+    document.querySelectorAll('.refresh-btn').forEach(btn => {
+        btn.addEventListener('click', () => refreshFighter(btn.dataset.input));
+    });
 }
 
 async function searchFighter(inputId, query) {
@@ -98,6 +107,7 @@ async function searchFighter(inputId, query) {
         const resolved = exact || (results.length === 1 ? results[0] : null);
         if (resolved) {
             updateFighterStats(inputId, resolved);
+            verifyFighterFreshness(inputId, resolved.name, seq);
         } else {
             hideFighterStats(inputId);
         }
@@ -150,6 +160,7 @@ function selectSuggestion(inputId, index) {
     clearTimeout(state.timer);
     document.getElementById(inputId).value = fighter.name; // nombre canónico del CSV
     updateFighterStats(inputId, fighter);
+    verifyFighterFreshness(inputId, fighter.name, state.seq);
     hideSuggestions(inputId);
     hideLookup(inputId);
 }
@@ -221,6 +232,7 @@ function clearSuggestions(inputId) {
 }
 
 function clearFighterUI(inputId) {
+    searchState[inputId].verifiedName = null;
     clearSuggestions(inputId);
     hideFighterStats(inputId);
     hideLookup(inputId);
@@ -252,15 +264,9 @@ async function lookupFighterOnUfcStats(inputId) {
 
         const data = await response.json();
         if (seq !== state.seq) return; // el usuario siguió escribiendo mientras respondía UFCStats
-        const stats = data.stats || {};
-        const fighter = {
-            name: stats.name || data.name,
-            record: data.record,
-            ranking: data.ranking,
-            weight_class: stats.weight_class
-        };
-        input.value = fighter.name;
-        updateFighterStats(inputId, fighter);
+        input.value = data.name; // nombre canónico de UFCStats
+        state.verifiedName = data.name; // esta respuesta ya pasó por las reglas de frescura
+        applyFighterResponse(inputId, data);
         hideLookup(inputId);
     } catch (error) {
         console.error('Error looking up fighter on UFCStats:', error);
@@ -289,6 +295,166 @@ function hideLookup(inputId) {
     const container = document.getElementById(`${inputId}Lookup`);
     container.classList.add('hidden');
     container.querySelector('.lookup-btn').disabled = false;
+}
+
+// --- Frescura de datos por corner ---
+// GET /fighter/{name} aplica las reglas de frescura del backend (re-scrapea si los datos superan
+// FIGHTER_MAX_AGE_HOURS o si el peleador peleó desde la última lectura) y devuelve el sello
+// last_updated / data_age_seconds / next_fight_date. Se llama al resolver un peleador; con
+// ?refresh=true (botón "Actualizar") fuerza el re-scrape aunque los datos sean recientes.
+async function verifyFighterFreshness(inputId, name, seq) {
+    const state = searchState[inputId];
+    if (state.verifiedName === name) return; // ya verificado y sigue siendo el peleador mostrado
+    if (state.verifyingName === name) {
+        state.verifySeq = seq; // ya hay una llamada en vuelo para este nombre: que su respuesta valga para esta secuencia
+        return;
+    }
+    // Cambió el peleador resuelto: lo verificado antes ya no describe lo que se muestra. Si el usuario
+    // vuelve a aquel nombre, se vuelve a consultar (ms si está fresco) en vez de reutilizar un estado
+    // que la verificación en vuelo de otro peleador pudo haber pisado (review HalJordan R2).
+    state.verifiedName = null;
+    state.verifyingName = name;
+    state.verifySeq = seq;
+    setFreshnessState(inputId, 'loading', 'Verificando datos en UFCStats…');
+
+    let data;
+    try {
+        data = await fetchFighter(name, false);
+    } catch (error) {
+        console.error('Error verifying fighter data:', error);
+        if (state.verifyingName !== name) return; // la reemplazó otra verificación
+        state.verifyingName = null;
+        if (state.verifySeq === state.seq) {
+            setFreshnessState(inputId, 'error', 'No se pudo verificar la frescura de los datos.');
+        }
+        return;
+    }
+    if (state.verifyingName !== name) return; // la reemplazó otra verificación (otro peleador)
+    state.verifyingName = null;
+    if (state.verifySeq !== state.seq) return; // el usuario cambió o borró el peleador mientras tanto
+    state.verifiedName = name;
+    applyFighterResponse(inputId, data);
+}
+
+async function refreshFighter(inputId) {
+    const input = document.getElementById(inputId);
+    const name = input.value.trim();
+    if (name.length < 2) return;
+
+    const state = searchState[inputId];
+    const seq = ++state.seq; // descarta búsquedas y verificaciones en vuelo
+    // El refresh reemplaza a cualquier verificación previa: si el usuario vuelve a escribir este mismo
+    // nombre mientras el refresh está en vuelo, la verificación debe correr (y no quedarse en "Actualizando…").
+    state.verifiedName = null;
+    clearTimeout(state.timer);
+    hideSuggestions(inputId);
+    hideError();
+    setFreshnessState(inputId, 'loading', 'Actualizando desde UFCStats…');
+
+    try {
+        const data = await fetchFighter(name, true);
+        if (seq !== state.seq) return;
+        input.value = data.name; // nombre canónico de UFCStats
+        state.verifiedName = data.name;
+        state.verifyingName = null; // una verificación en vuelo para este nombre ya no debe pintar nada
+        applyFighterResponse(inputId, data);
+    } catch (error) {
+        console.error('Error refreshing fighter:', error);
+        if (seq === state.seq) {
+            setFreshnessState(inputId, 'error', error.status === 404
+                ? 'No encontrado en UFCStats. Prueba con el nombre completo.'
+                : 'No se pudo actualizar desde UFCStats. Intenta de nuevo.');
+        }
+    }
+}
+
+async function fetchFighter(name, refresh) {
+    const suffix = refresh ? '?refresh=true' : '';
+    const response = await fetch(`${API_BASE_URL}/fighter/${encodeURIComponent(name)}${suffix}`);
+    if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+// Traduce la respuesta de GET /fighter al objeto que pinta updateFighterStats
+function applyFighterResponse(inputId, data) {
+    const stats = data.stats || {};
+    const fighter = {
+        name: data.name,
+        record: data.record,
+        ranking: data.ranking,
+        weight_class: stats.weight_class,
+        last_updated: data.last_updated ?? stats.last_updated ?? null,
+        next_fight_date: data.next_fight_date ?? stats.next_fight_date ?? null,
+        data_age_seconds: data.data_age_seconds ?? null
+    };
+    updateFighterStats(inputId, fighter);
+    // Toda respuesta exitosa de /fighter cierra el estado de carga, aunque no traiga sello de edad
+    setFreshnessState(inputId, 'idle', describeFreshness(fighter));
+}
+
+function describeFreshness(fighter) {
+    const age = formatDataAge(fighter.data_age_seconds, fighter.last_updated);
+    let text = age ? `Datos de UFCStats: ${age}` : 'Datos de UFCStats';
+
+    if (fighter.next_fight_date) {
+        const today = localIsoDate(new Date());
+        if (fighter.next_fight_date === today) {
+            text += ' · pelea hoy (actualiza al terminar)';
+        } else if (fighter.next_fight_date > today) {
+            text += ` · próxima pelea ${formatShortDate(fighter.next_fight_date)}`;
+        } else {
+            text += ` · peleó el ${formatShortDate(fighter.next_fight_date)}`;
+        }
+    }
+    return text;
+}
+
+// Edad de los datos: el backend la calcula (data_age_seconds) para no depender de la zona
+// horaria del servidor; last_updated (ISO sin zona) queda como fallback.
+function formatDataAge(ageSeconds, lastUpdated) {
+    let seconds = typeof ageSeconds === 'number' ? ageSeconds : NaN;
+    if (!Number.isFinite(seconds) && lastUpdated) {
+        const parsed = Date.parse(String(lastUpdated).replace(/(\.\d{3})\d+/, '$1'));
+        if (!Number.isNaN(parsed)) seconds = (Date.now() - parsed) / 1000;
+    }
+    if (!Number.isFinite(seconds)) return null;
+    seconds = Math.max(0, seconds);
+    if (seconds < 60) return 'hace un momento';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `hace ${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `hace ${hours} h`;
+    const days = Math.floor(hours / 24);
+    return `hace ${days} ${days === 1 ? 'día' : 'días'}`;
+}
+
+function localIsoDate(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function formatShortDate(isoDate) {
+    const date = new Date(`${isoDate}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return isoDate;
+    return date.toLocaleDateString('es', { day: 'numeric', month: 'short' });
+}
+
+function setFreshnessState(inputId, mode, message) {
+    const letter = inputId === 'fighterA' ? 'A' : 'B';
+    const row = document.getElementById(`fighter${letter}Freshness`);
+    const text = row.querySelector('.freshness-message');
+    const icon = row.querySelector('.freshness-text i');
+    const button = row.querySelector('.refresh-btn');
+
+    row.classList.remove('is-loading', 'is-error');
+    if (mode !== 'idle') row.classList.add(`is-${mode}`);
+    text.textContent = message;
+    icon.className = mode === 'loading' ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-clock-rotate-left';
+    button.disabled = mode === 'loading';
 }
 
 function showError(message) {

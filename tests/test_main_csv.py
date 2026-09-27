@@ -52,9 +52,20 @@ def test_add_new_fighter_keeps_csv_schema(csv_path):
     })
 
     df = pd.read_csv(csv_path)
-    assert list(df.columns) == COLUMNS
+    assert list(df.columns) == COLUMNS + ['next_fight_date']
     assert len(df) == 2
     assert df[df.name == 'Raul Rosas Jr.'].iloc[0]['wins'] == 12
+
+
+def test_update_existing_fighter_clears_next_fight_date(csv_path):
+    df = pd.read_csv(csv_path)
+    df['next_fight_date'] = '2026-09-26'
+    df.to_csv(csv_path, index=False)
+
+    main._update_or_add_to_csv({'name': 'Jon Jones', 'next_fight_date': None})
+
+    row = pd.read_csv(csv_path).iloc[0]
+    assert pd.isna(row['next_fight_date'])
 
 
 def test_reload_reads_the_configured_path(csv_path):

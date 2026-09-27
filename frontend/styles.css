@@ -272,7 +272,8 @@
     color: #E7E5E4;
 }
 
-.lookup-btn {
+.lookup-btn,
+.refresh-btn {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -289,25 +290,30 @@
     transition: background 0.2s ease;
 }
 
-.lookup-btn-red {
+.lookup-btn-red,
+.refresh-btn-red {
     color: #EF4444;
     border-color: #DC2626;
 }
 
-.lookup-btn-red:hover {
+.lookup-btn-red:hover,
+.refresh-btn-red:hover {
     background: rgba(220, 38, 38, 0.15);
 }
 
-.lookup-btn-blue {
+.lookup-btn-blue,
+.refresh-btn-blue {
     color: #3B82F6;
     border-color: #2563EB;
 }
 
-.lookup-btn-blue:hover {
+.lookup-btn-blue:hover,
+.refresh-btn-blue:hover {
     background: rgba(37, 99, 235, 0.15);
 }
 
-.lookup-btn:disabled {
+.lookup-btn:disabled,
+.refresh-btn:disabled {
     opacity: 0.5;
     cursor: wait;
 }
@@ -331,4 +337,29 @@
     color: #EF4444;
     margin-top: 0.15rem;
     flex-shrink: 0;
+}
+
+/* --- Sello de frescura por corner + botón "Actualizar" (re-scrape forzado en UFCStats) --- */
+.freshness-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem 0.75rem;
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: #9CA3AF;
+}
+
+.freshness-row .freshness-text i {
+    margin-right: 0.25rem;
+}
+
+.freshness-row.is-error .freshness-message {
+    color: #E7E5E4;
+}
+
+.refresh-btn {
+    padding: 0.2rem 0.55rem;
+    font-size: 0.7rem;
 }

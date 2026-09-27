@@ -199,21 +199,42 @@ class MMADataCollector:
             
             # Historial de peleas
             fight_history = []
+            stats['next_fight_date'] = None
             fight_rows = soup.find_all('tr', class_='b-fight-details__table-row')
             
-            for fight_row in fight_rows[1:]:  # Skip header
+            for fight_row in fight_rows:
                 cells = fight_row.find_all('td')
-                if len(cells) >= 7:
-                    fight = {
-                        'result': cells[0].get_text(strip=True),
-                        'opponent': cells[1].get_text(strip=True),
-                        'event': cells[2].get_text(strip=True),
-                        'date': cells[3].get_text(strip=True),
-                        'method': cells[4].get_text(strip=True),
-                        'round': cells[5].get_text(strip=True),
-                        'time': cells[6].get_text(strip=True)
-                    }
-                    fight_history.append(fight)
+                if not cells:
+                    continue
+                texts = [[p.get_text(strip=True) for p in td.find_all('p')]
+                         or [td.get_text(strip=True)] for td in cells]
+
+                def pick(i, j):
+                    return texts[i][j] if i < len(texts) and j < len(texts[i]) else ''
+
+                result = pick(0, 0)
+                if result == 'next':
+                    # UFCStats puede incluir celdas vacías adicionales en la fila next.
+                    event_texts = texts[6] if len(cells) >= 10 else texts[2] if len(cells) >= 3 else []
+                    event = event_texts[-2] if len(event_texts) >= 2 else ''
+                    fight_date = event_texts[-1] if event_texts else ''
+                    stats['next_fight_date'] = self._parse_fight_date(fight_date)
+                    method = round_number = fight_time = ''
+                elif len(cells) >= 10:
+                    event, fight_date = pick(6, 0), pick(6, 1)
+                    method, round_number, fight_time = pick(7, 0), pick(8, 0), pick(9, 0)
+                else:
+                    continue
+
+                fight_history.append({
+                    'result': result,
+                    'opponent': pick(1, 1),
+                    'event': event,
+                    'date': fight_date,
+                    'method': method,
+                    'round': round_number,
+                    'time': fight_time,
+                })
             
             # Peleador sin peleas UFC registradas: UFCStats muestra 0% en las 4 métricas (o '--').
             # Eso no es rendimiento nulo sino dato desconocido: omitirlas para que apliquen los defaults.
@@ -230,6 +251,12 @@ class MMADataCollector:
         except Exception as e:
             logger.warning("Error getting detailed stats from %s: %s", profile_url, e)
             return {}
+
+    def _parse_fight_date(self, text):
+        try:
+            return datetime.strptime(text, '%b. %d, %Y').date().isoformat()
+        except (TypeError, ValueError):
+            return None
     
     def _parse_height(self, height_str):
         """Convertir altura a cm"""

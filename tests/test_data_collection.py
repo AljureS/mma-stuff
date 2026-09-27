@@ -84,6 +84,7 @@ def test_list_parser_uses_surname_and_returns_real_roster_values():
     assert result['weight_class'] == 'bantamweight'
     assert result['striking_accuracy'] == 42.0
     assert result['takedown_defense'] == 25.0
+    assert result['next_fight_date'] == '2026-09-26'
 
 
 def test_profile_parser_only_returns_csv_stats_and_age():
@@ -99,8 +100,41 @@ def test_profile_parser_only_returns_csv_stats_and_age():
     assert stats['takedown_defense'] == 25.0
     assert stats['age'] == expected_age
     assert isinstance(stats['fight_history'], list)
+    assert set(stats) == {'striking_accuracy', 'striking_defense', 'takedown_accuracy',
+                          'takedown_defense', 'age', 'fight_history', 'next_fight_date'}
     assert not {'slpm', 'significant_strikes_per_minute', 'sapm', 'td_avg',
                 'height', 'weight', 'reach', 'stance'} & stats.keys()
+
+
+def test_profile_parser_reads_next_and_completed_fights():
+    collector = collector_with_responses(html_response('ufcstats_fighter_rosas_jr.html'))
+
+    stats = collector.get_fighter_detailed_stats(PROFILE_URL)
+
+    assert stats['next_fight_date'] == '2026-09-26'
+    assert stats['fight_history'][0] == {
+        'result': 'next', 'opponent': 'Raoni Barcelos',
+        'event': 'UFC Fight Night: Rosas Jr. vs. Barcelos', 'date': 'Sep. 26, 2026',
+        'method': '', 'round': '', 'time': '',
+    }
+    assert stats['fight_history'][1] == {
+        'result': 'win', 'opponent': 'Rob Font',
+        'event': 'UFC 326: Holloway vs. Oliveira 2', 'date': 'Mar. 07, 2026',
+        'method': 'U-DEC', 'round': '3', 'time': '5:00',
+    }
+
+
+def test_profile_without_next_fight_clears_next_fight_date():
+    soup = BeautifulSoup((FIXTURES / 'ufcstats_fighter_rosas_jr.html').read_bytes(), 'html.parser')
+    next_row = soup.find('tr', class_='b-fight-details__table-row_type_first')
+    next_row.decompose()
+    html = str(soup).encode()
+    collector = collector_with_responses(SimpleNamespace(text=html.decode(), content=html, status_code=200))
+
+    stats = collector.get_fighter_detailed_stats(PROFILE_URL)
+
+    assert stats['next_fight_date'] is None
+    assert stats['fight_history'][0]['result'] == 'win'
 
 
 def test_profile_get_also_solves_challenge():
@@ -277,4 +311,5 @@ def test_zero_stat_with_other_stats_unknown_is_kept():
 
     stats = collector.get_fighter_detailed_stats(PROFILE_URL)
 
-    assert stats == {**{k: v for k, v in stats.items() if k in ('age', 'fight_history')}, 'takedown_defense': 0.0}
+    assert stats == {**{k: v for k, v in stats.items() if k in ('age', 'fight_history', 'next_fight_date')},
+                     'takedown_defense': 0.0}
