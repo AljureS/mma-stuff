@@ -355,6 +355,7 @@ El directorio `tasks/` existe desde 2026-07-01: `todo.md` contiene el plan maest
 - **Cero pereza:** encuentra causas raíz. Nada de fixes temporales. Estándar de desarrollador senior.
 - **Impacto mínimo:** los cambios solo tocan lo necesario; evita introducir bugs.
 - Y el que ya rige este repo: **cualquier cambio al proyecto debe reflejarse en este `CLAUDE.md`** (ver aviso al inicio).
+- **Autoría de commits:** los commits (y PRs) llevan únicamente la identidad del owner (git user del repo). Nunca añadir trailers de atribución a agentes (`Co-Authored-By: Claude…`, `Generated with…`) — regla fijada por el owner el 2026-09-26.
 
 ## Tooling de Refactor: Subagentes y Skills (creado 2026-07-01)
 
