@@ -1,0 +1,1 @@
+2026-09-26 17:25 Mac intacta: verify_plan.sh recorre el manifest de 28 archivos (ninguno falta, fuera de scope sin cambios), venv/pkl/csv/api.env locales presentes. Resultado: PLAN OK 2026-09-26 17:25:43

@@ -1,0 +1,1 @@
+2026-09-26 16:35 rsync (sin --delete, origen intacto) a ~/apps/mma-stuff excluyendo venv/.git/.collab/.claude/tasks/baselines/api/.env. api/.env filtrado sin HOMELAB (grep=0), chmod 600. sha256 pkl 78e3fac8... y csv 3bcdccfc... idénticos Mac/server. verify_plan PLAN OK.

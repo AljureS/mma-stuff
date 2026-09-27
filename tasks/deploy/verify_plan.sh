@@ -29,7 +29,7 @@ elif echo "$mfun" | grep -q '"AllowFunnel"'; then say "FAIL: funnel configurado 
 # 4) Server: obligatorio desde que C1 está marcado (antes es informativo)
 plan=$(sed -n '/^# Plan: Deploy al Home Lab/,/^## Review/p' tasks/todo.md)
 deployed=0; echo "$plan" | grep -Eq '^- \[x\] C1 ' && deployed=1
-SSH="ssh -o BatchMode=yes -o ConnectTimeout=8 simon@homelab"
+SSH="ssh -i $HOME/.ssh/id_ed25519_homelab -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 simon@homelab"
 if $SSH true 2>/dev/null; then
   cur=$($SSH 'ss -tulnH | awk "{print \$1, \$5}" | sort -u') || { say "FAIL: no se pudo leer listeners del server"; fail=1; }
   fun=$($SSH 'tailscale funnel status --json 2>/dev/null') || { say "FAIL: no se pudo leer funnel del server"; fail=1; }
@@ -39,7 +39,8 @@ if $SSH true 2>/dev/null; then
   fi
   if [ -s "$SRV_BASE" ]; then
     # Nuevos listeners permitidos: solo loopback (docker 127.0.0.1:8000) y la IP de Tailscale (serve :443/:80)
-    new=$(comm -13 "$SRV_BASE" <(echo "$cur") | grep -Ev ' (127\.0\.0\.1|\[::1\]|100\.99\.75\.17|\[fd7a:115c:a1e0:[0-9a-f:]*\]):[0-9]+$')
+    # Comparación independiente del orden/locale (comm fallaba: server y Mac ordenan distinto)
+    new=$(echo "$cur" | grep -vxFf "$SRV_BASE" | grep -Ev ' (127\.0\.0\.1|\[::1\]|100\.99\.75\.17|\[fd7a:115c:a1e0:[0-9a-f:]*\]):[0-9]+$')
     [ -z "$new" ] && say "ok: server sin listeners nuevos fuera de loopback/tailnet" || { say "FAIL: server expone nuevos listeners: $(echo $new)"; fail=1; }
   fi
   if ! echo "$fun" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then say "FAIL: respuesta de funnel del server no es JSON válido"; fail=1

@@ -1,0 +1,1 @@
+2026-09-26 17:24 tailscale serve --bg 8000 -> https://homelab.tail5fb6d5.ts.net (tailnet only), / proxy http://127.0.0.1:8000. funnel status JSON sin AllowFunnel. verify_plan PLAN OK (único listener nuevo del deploy: tcp 127.0.0.1:8000; serve escucha en la IP de Tailscale).

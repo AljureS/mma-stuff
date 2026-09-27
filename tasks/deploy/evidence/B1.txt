@@ -1,0 +1,1 @@
+2026-09-26 16:30 homelab despierto: tailscale ping OK, uptime 5:52, 5.2Gi RAM libre, 427G disco, trixie x86_64.

@@ -1,0 +1,1 @@
+2026-09-26 16:33 mma_prereqs.sh con sudo -S (password por stdin desde api/.env, no impreso; grep en log = 0): rc=0. Docker 29.8.1, Compose v5.5.1, rsync, simon en grupo docker (docker ps sin sudo OK), OperatorUser=simon, suspend.target masked. ssh y tailscaled active. verify_plan PLAN OK.

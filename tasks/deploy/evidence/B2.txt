@@ -1,0 +1,1 @@
+2026-09-26 16:30 llave personal ~/.ssh/id_ed25519_homelab (saidsimon2@gmail.com) instalada por el owner; llave de trabajo retirada (grep primecredential = 0, .bak borrado). BatchMode SSH OK con IdentitiesOnly. Baseline de listeners capturada pre-deploy en tasks/baselines/server_listeners.txt.
