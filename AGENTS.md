@@ -1,3 +1,5 @@
+> **Copia para Codex (HalJordan) de `CLAUDE.md`, la fuente única de verdad del proyecto.** NO editar este archivo a mano: tras cualquier cambio en `CLAUDE.md`, regenerarlo con `{ head -1 AGENTS.md; echo; cat CLAUDE.md; } > AGENTS.md` (regenerado 2026-09-26 tras el fix de búsqueda/carga de peleadores).
+
 # MMA Fight Predictor - Guía del Proyecto
 
 > **⚠️ IMPORTANTE - DOCUMENTACIÓN SINCRONIZADA**

@@ -7,6 +7,17 @@ const API_BASE_URL = window.location.protocol === 'file:' || window.location.por
 let currentPrediction = null;
 let probabilityChart = null;
 
+// Estado de búsqueda POR corner: timer de debounce, número de secuencia (para ignorar
+// respuestas que llegan fuera de orden) y sugerencias visibles. Antes había un solo
+// timer compartido: escribir en el corner azul cancelaba la búsqueda del rojo, y una
+// respuesta lenta podía pisar a una más nueva.
+const searchState = {
+    fighterA: { timer: null, seq: 0, suggestions: [], activeIndex: -1 },
+    fighterB: { timer: null, seq: 0, suggestions: [], activeIndex: -1 }
+};
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_LIMIT = 8;
+
 // Corner colors (design system Fight Night — deben coincidir con tailwind.config de index.html)
 const CORNER_RED = '#DC2626';
 const CORNER_BLUE = '#2563EB';
@@ -22,30 +33,168 @@ function initializeEventListeners() {
     // Predict button
     document.getElementById('predictBtn').addEventListener('click', makePrediction);
 
-    // Fighter inputs with debounced search
-    let debounceTimer;
+    // Fighter inputs: búsqueda con debounce independiente por corner + navegación con teclado
     ['fighterA', 'fighterB'].forEach(id => {
-        document.getElementById(id).addEventListener('input', function (e) {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => searchFighter(id, e.target.value), 500);
+        const input = document.getElementById(id);
+        const state = searchState[id];
+
+        input.addEventListener('input', function (e) {
+            clearTimeout(state.timer);
+            state.seq++; // cada tecla invalida al instante toda búsqueda o lookup en vuelo
+            hideError();
+            const query = e.target.value.trim();
+            if (query.length < 2) {
+                clearFighterUI(id);
+                return;
+            }
+            state.timer = setTimeout(() => searchFighter(id, query), SEARCH_DEBOUNCE_MS);
         });
+
+        input.addEventListener('keydown', function (e) {
+            handleSuggestionKeys(id, e);
+        });
+
+        input.addEventListener('focus', function () {
+            if (state.suggestions.length > 0) showSuggestions(id);
+        });
+
+        // Pequeño retraso: si el usuario hace click en una sugerencia, el click llega antes de ocultar
+        input.addEventListener('blur', function () {
+            setTimeout(() => hideSuggestions(id), 150);
+        });
+    });
+
+    // Botones "Buscar en UFCStats" (fallback cuando la base local no tiene al peleador)
+    document.querySelectorAll('.lookup-btn').forEach(btn => {
+        btn.addEventListener('click', () => lookupFighterOnUfcStats(btn.dataset.input));
     });
 }
 
 async function searchFighter(inputId, query) {
-    if (query.length < 2) return;
+    const state = searchState[inputId];
+    const seq = ++state.seq;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/search/fighters/${encodeURIComponent(query)}`);
+        const response = await fetch(`${API_BASE_URL}/search/fighters/${encodeURIComponent(query)}?limit=${SEARCH_LIMIT}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
 
-        if (data.results && data.results.length > 0) {
-            const fighter = data.results[0];
-            updateFighterStats(inputId, fighter);
+        // Llegó tarde: ya hay una búsqueda más nueva para este corner
+        if (seq !== state.seq) return;
+
+        const results = data.results || [];
+        if (results.length === 0) {
+            clearSuggestions(inputId);
+            hideFighterStats(inputId);
+            setLookupState(inputId, 'idle', 'No está en la base local.');
+            return;
+        }
+
+        hideLookup(inputId);
+        renderSuggestions(inputId, results);
+
+        // Mostrar el récord solo si no hay ambigüedad: match exacto o un único resultado
+        const exact = results.find(f => f.name.toLowerCase() === query.toLowerCase());
+        const resolved = exact || (results.length === 1 ? results[0] : null);
+        if (resolved) {
+            updateFighterStats(inputId, resolved);
+        } else {
+            hideFighterStats(inputId);
         }
     } catch (error) {
         console.error('Error searching fighter:', error);
+        if (seq === state.seq) {
+            clearSuggestions(inputId);
+            hideFighterStats(inputId);
+            setLookupState(inputId, 'error', 'No se pudo consultar la base local. Intenta de nuevo.');
+        }
     }
+}
+
+function renderSuggestions(inputId, results) {
+    const state = searchState[inputId];
+    const list = document.getElementById(`${inputId}Suggestions`);
+    state.suggestions = results;
+    state.activeIndex = -1;
+    list.innerHTML = '';
+
+    results.forEach((fighter, index) => {
+        const item = document.createElement('li');
+        item.className = 'suggestion-item';
+        item.setAttribute('role', 'option');
+
+        const name = document.createElement('span');
+        name.className = 'suggestion-name';
+        name.textContent = fighter.name;
+
+        const meta = document.createElement('span');
+        meta.className = 'suggestion-meta';
+        meta.textContent = [fighter.record, formatWeightClass(fighter.weight_class)].filter(Boolean).join(' · ');
+
+        item.append(name, meta);
+        // mousedown con preventDefault: el input no pierde el foco antes de que llegue el click
+        item.addEventListener('mousedown', e => e.preventDefault());
+        item.addEventListener('click', () => selectSuggestion(inputId, index));
+        list.appendChild(item);
+    });
+
+    showSuggestions(inputId);
+}
+
+function selectSuggestion(inputId, index) {
+    const state = searchState[inputId];
+    const fighter = state.suggestions[index];
+    if (!fighter) return;
+
+    state.seq++; // el usuario ya eligió: descartar búsquedas en vuelo
+    clearTimeout(state.timer);
+    document.getElementById(inputId).value = fighter.name; // nombre canónico del CSV
+    updateFighterStats(inputId, fighter);
+    hideSuggestions(inputId);
+    hideLookup(inputId);
+}
+
+function handleSuggestionKeys(inputId, e) {
+    const state = searchState[inputId];
+    const list = document.getElementById(`${inputId}Suggestions`);
+    const open = !list.classList.contains('hidden') && state.suggestions.length > 0;
+
+    if (e.key === 'Escape') {
+        hideSuggestions(inputId);
+        return;
+    }
+    if (!open) return;
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const delta = e.key === 'ArrowDown' ? 1 : -1;
+        const count = state.suggestions.length;
+        state.activeIndex = (state.activeIndex + delta + count) % count;
+        list.querySelectorAll('.suggestion-item').forEach((item, i) => {
+            item.classList.toggle('is-active', i === state.activeIndex);
+        });
+    } else if (e.key === 'Enter' && state.activeIndex >= 0) {
+        e.preventDefault();
+        selectSuggestion(inputId, state.activeIndex);
+    }
+}
+
+function showSuggestions(inputId) {
+    document.getElementById(`${inputId}Suggestions`).classList.remove('hidden');
+    document.getElementById(inputId).setAttribute('aria-expanded', 'true');
+}
+
+function hideSuggestions(inputId) {
+    const list = document.getElementById(`${inputId}Suggestions`);
+    list.classList.add('hidden');
+    searchState[inputId].activeIndex = -1;
+    list.querySelectorAll('.is-active').forEach(item => item.classList.remove('is-active'));
+    document.getElementById(inputId).setAttribute('aria-expanded', 'false');
+}
+
+function formatWeightClass(weightClass) {
+    if (!weightClass || String(weightClass).toLowerCase() === 'unknown') return '';
+    return String(weightClass).replace(/_/g, ' ');
 }
 
 function updateFighterStats(inputId, fighter) {
@@ -60,17 +209,110 @@ function updateFighterStats(inputId, fighter) {
     statsDiv.classList.remove('hidden');
 }
 
+function hideFighterStats(inputId) {
+    const letter = inputId === 'fighterA' ? 'A' : 'B';
+    document.getElementById(`fighter${letter}Stats`).classList.add('hidden');
+}
+
+function clearSuggestions(inputId) {
+    searchState[inputId].suggestions = [];
+    document.getElementById(`${inputId}Suggestions`).innerHTML = '';
+    hideSuggestions(inputId);
+}
+
+function clearFighterUI(inputId) {
+    clearSuggestions(inputId);
+    hideFighterStats(inputId);
+    hideLookup(inputId);
+}
+
+// Fallback cuando la base local no tiene al peleador: GET /fighter/{name} dispara el
+// scraping de UFCStats en el backend (tarda unos segundos) y lo agrega al CSV.
+async function lookupFighterOnUfcStats(inputId) {
+    const input = document.getElementById(inputId);
+    const query = input.value.trim();
+    if (query.length < 2) return;
+
+    const state = searchState[inputId];
+    const seq = ++state.seq; // invalida búsquedas locales en vuelo
+    clearTimeout(state.timer);
+    hideSuggestions(inputId);
+    setLookupState(inputId, 'loading', 'Buscando en UFCStats…');
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/fighter/${encodeURIComponent(query)}`);
+        if (seq !== state.seq) return;
+
+        if (response.status === 404) {
+            hideFighterStats(inputId);
+            setLookupState(inputId, 'notfound', 'No encontrado en UFCStats. Prueba con el nombre completo.');
+            return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        if (seq !== state.seq) return; // el usuario siguió escribiendo mientras respondía UFCStats
+        const stats = data.stats || {};
+        const fighter = {
+            name: stats.name || data.name,
+            record: data.record,
+            ranking: data.ranking,
+            weight_class: stats.weight_class
+        };
+        input.value = fighter.name;
+        updateFighterStats(inputId, fighter);
+        hideLookup(inputId);
+    } catch (error) {
+        console.error('Error looking up fighter on UFCStats:', error);
+        if (seq === state.seq) {
+            setLookupState(inputId, 'error', 'No se pudo consultar UFCStats. Intenta de nuevo.');
+        }
+    }
+}
+
+function setLookupState(inputId, mode, message) {
+    const container = document.getElementById(`${inputId}Lookup`);
+    const row = container.querySelector('.lookup-row');
+    const text = container.querySelector('.lookup-message');
+    const icon = container.querySelector('.lookup-text i');
+    const button = container.querySelector('.lookup-btn');
+
+    row.classList.remove('is-loading', 'is-notfound', 'is-error');
+    if (mode !== 'idle') row.classList.add(`is-${mode}`);
+    text.textContent = message;
+    icon.className = mode === 'loading' ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-circle-info';
+    button.disabled = mode === 'loading';
+    container.classList.remove('hidden');
+}
+
+function hideLookup(inputId) {
+    const container = document.getElementById(`${inputId}Lookup`);
+    container.classList.add('hidden');
+    container.querySelector('.lookup-btn').disabled = false;
+}
+
+function showError(message) {
+    document.getElementById('errorMessage').textContent = message;
+    document.getElementById('errorBanner').classList.remove('hidden');
+}
+
+function hideError() {
+    document.getElementById('errorBanner').classList.add('hidden');
+}
+
 async function makePrediction() {
     const fighterA = document.getElementById('fighterA').value.trim();
     const fighterB = document.getElementById('fighterB').value.trim();
 
+    hideError();
+
     if (!fighterA || !fighterB) {
-        alert('Por favor ingresa ambos luchadores');
+        showError('Por favor ingresa ambos luchadores.');
         return;
     }
 
     if (fighterA.toLowerCase() === fighterB.toLowerCase()) {
-        alert('Los luchadores deben ser diferentes');
+        showError('Los luchadores deben ser diferentes.');
         return;
     }
 
@@ -95,8 +337,14 @@ async function makePrediction() {
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Error making prediction');
+            const errorData = await response.json().catch(() => ({}));
+            const detail = errorData.detail || 'Error making prediction';
+            if (response.status === 404) {
+                const match = /not found in database: (.+?)\. /.exec(detail);
+                const who = match ? match[1] : 'uno de los peleadores';
+                throw new Error(`No se encontró a ${who} en la base local ni en UFCStats. Revisa el nombre completo o usa "Buscar en UFCStats".`);
+            }
+            throw new Error(detail);
         }
 
         const prediction = await response.json();
@@ -106,7 +354,7 @@ async function makePrediction() {
 
     } catch (error) {
         console.error('Error making prediction:', error);
-        alert(`Error: ${error.message}`);
+        showError(error.message);
     } finally {
         showLoading(false);
     }
@@ -247,18 +495,31 @@ function displayKeyFactors(factors, prediction) {
         const factorElement = document.createElement('div');
         factorElement.className = `factor-item ${cornerClass}`;
 
-        factorElement.innerHTML = `
-            <i class="fa-solid ${meta.icon} factor-icon"></i>
-            <div class="factor-body">
-                <span class="factor-name">${factor.factor}</span>
-                <span class="factor-favors">${favorsText}</span>
-            </div>
-            <div class="factor-metrics">
-                <span class="factor-value">${factor.value > 0 ? '+' : ''}${factor.value}</span>
-                <span class="factor-impact">${impactText}</span>
-            </div>
-        `;
+        // Construido con textContent (no innerHTML): los nombres de peleadores vienen del input del usuario
+        const icon = document.createElement('i');
+        icon.className = `fa-solid ${meta.icon} factor-icon`;
 
+        const body = document.createElement('div');
+        body.className = 'factor-body';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'factor-name';
+        nameEl.textContent = factor.factor;
+        const favorsEl = document.createElement('span');
+        favorsEl.className = 'factor-favors';
+        favorsEl.textContent = favorsText;
+        body.append(nameEl, favorsEl);
+
+        const metrics = document.createElement('div');
+        metrics.className = 'factor-metrics';
+        const valueEl = document.createElement('span');
+        valueEl.className = 'factor-value';
+        valueEl.textContent = `${factor.value > 0 ? '+' : ''}${factor.value}`;
+        const impactEl = document.createElement('span');
+        impactEl.className = 'factor-impact';
+        impactEl.textContent = impactText;
+        metrics.append(valueEl, impactEl);
+
+        factorElement.append(icon, body, metrics);
         container.appendChild(factorElement);
     });
 }

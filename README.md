@@ -65,7 +65,7 @@ UI en `https://homelab.<tailnet>.ts.net/ui/`. Quién puede entrar lo decide la p
 ## Tests
 
 ```bash
-venv/bin/python -m pytest tests/ -v   # 15 tests del cliente LLM
+venv/bin/python -m pytest tests/ -v   # 46 tests: cliente LLM + scraper (offline, fixtures) + main.py (búsqueda local, CSV)
 python test_scraping.py               # prueba manual del scraper (red real)
 ```
 

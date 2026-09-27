@@ -1,5 +1,21 @@
+import hashlib
+import logging
+import re
+import threading
+import time
+from datetime import date, datetime
+from urllib.parse import urlsplit
+
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+# Rate limit compartido por TODAS las instancias (la API crea un collector por peleador,
+# en threads distintos): nunca más de un request a UFCStats por `request_delay` segundos.
+_throttle_lock = threading.Lock()
+_last_request_at = 0.0
+
 
 class MMADataCollector:
     def __init__(self):
@@ -7,6 +23,57 @@ class MMADataCollector:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+        self.request_delay = 1.0
+
+    def _throttle(self):
+        """Esperar hasta que hayan pasado `request_delay` s desde el último request (global)."""
+        global _last_request_at
+        if self.request_delay <= 0:
+            return
+        with _throttle_lock:
+            wait = self.request_delay - (time.monotonic() - _last_request_at)
+            if wait > 0:
+                time.sleep(wait)
+            _last_request_at = time.monotonic()
+
+    def _get(self, url, timeout):
+        """GET con rate limit; resuelve una vez el challenge JS de UFCStats con la cookie de la sesión."""
+        self._throttle()
+        response = self.session.get(url, timeout=timeout)
+        nonce_match = re.search(r'var nonce="([0-9a-f]+)"', response.text)
+        if not nonce_match:
+            return response
+
+        zeros_match = re.search(r"target=new Array\((\d+)\+1\)\.join\('0'\)", response.text)
+        if not zeros_match:
+            logger.warning("UFCStats challenge has no difficulty for %s", url)
+            return response
+
+        nonce = nonce_match.group(1)
+        target = '0' * int(zeros_match.group(1))
+        for n in range(2_000_000):
+            if hashlib.sha256(f'{nonce}:{n}'.encode()).hexdigest().startswith(target):
+                break
+        else:
+            logger.warning("UFCStats challenge exceeded iteration limit for %s", url)
+            return response
+
+        parsed_url = urlsplit(url)
+        challenge_url = f'{parsed_url.scheme}://{parsed_url.netloc}/__c'
+        self._throttle()
+        self.session.post(challenge_url, data={'nonce': nonce, 'n': n}, timeout=timeout)
+        self._throttle()
+        return self.session.get(url, timeout=timeout)
+
+    def _search_letter(self, fighter_name):
+        parts = fighter_name.split()
+        while len(parts) > 1 and parts[-1].lower().rstrip('.') in {'jr', 'sr', 'ii', 'iii', 'iv'}:
+            parts.pop()
+        return parts[-1][0].upper() if parts else 'A'
+
+    @staticmethod
+    def _normalized_name(name):
+        return ' '.join(re.sub(r'[.-]', ' ', name.lower()).split())
 
     def search_and_scrape_fighter(self, fighter_name: str) -> dict:
         """
@@ -15,126 +82,120 @@ class MMADataCollector:
         Returns:
             dict: Datos del peleador o None si no se encuentra
         """
-        print(f"Searching for fighter: {fighter_name}")
-
-        # Buscar en UFCStats
-        search_url = "http://ufcstats.com/statistics/fighters/search"
+        logger.info("Searching for fighter: %s", fighter_name)
 
         try:
-            # UFCStats ordena por APELLIDO, intentar con última palabra del nombre
-            name_parts = fighter_name.split()
-            last_name_letter = name_parts[-1][0].upper() if name_parts else 'A'
-
+            last_name_letter = self._search_letter(fighter_name)
             list_url = f"http://ufcstats.com/statistics/fighters?char={last_name_letter}&page=all"
-
-            print(f"Fetching URL: {list_url} (searching by last name: {name_parts[-1] if name_parts else ''})")
-            response = self.session.get(list_url, timeout=15)
+            logger.debug("Fetching fighter list: %s", list_url)
+            response = self._get(list_url, timeout=15)
             soup = BeautifulSoup(response.content, 'html.parser')
 
-            # Buscar en la tabla de peleadores
             fighter_rows = soup.find_all('tr', class_='b-statistics__table-row')
-            print(f"Found {len(fighter_rows)} rows in table")
-
-            checked_count = 0
-            for row in fighter_rows[1:]:  # Skip header
+            search_name = self._normalized_name(fighter_name)
+            exact_match = None
+            substring_matches = []
+            for row in fighter_rows:
                 cells = row.find_all('td')
                 if len(cells) >= 10:
-                    # En UFCStats, el nombre está en el primer <a> tag
                     name_link = row.find('a', class_='b-link b-link_style_black')
                     if not name_link:
                         continue
 
-                    # Combinar primer y segundo nombre (UFCStats divide el nombre)
                     first_name = cells[0].get_text(strip=True)
                     last_name = cells[1].get_text(strip=True)
                     full_name = f"{first_name} {last_name}".strip()
+                    name = self._normalized_name(full_name)
+                    if name == search_name:
+                        if exact_match is None:
+                            exact_match = (full_name, cells, name_link)
+                    elif search_name and (search_name in name or name in search_name):
+                        substring_matches.append((full_name, cells, name_link))
 
-                    checked_count += 1
-                    if checked_count <= 5 or 'gamrot' in full_name.lower():
-                        print(f"Checking: '{full_name}'")
+            # Sin match exacto, un substring solo vale si es único: "Rosas" en la página R da
+            # Jessie Rosas y Raul Rosas Jr. -> None (la UI pide el nombre completo).
+            match = exact_match
+            if match is None and len(substring_matches) == 1:
+                match = substring_matches[0]
+            elif match is None and len(substring_matches) > 1:
+                logger.warning("Ambiguous fighter name %s: %d candidates (%s)", fighter_name,
+                               len(substring_matches), ', '.join(m[0] for m in substring_matches[:5]))
+                return None
+            if match:
+                name, cells, name_link = match
+                logger.info("Found fighter: %s", name)
 
-                    # Búsqueda case-insensitive más estricta
-                    search_lower = fighter_name.lower().replace('.', '').replace('-', ' ')
-                    name_lower = full_name.lower().replace('.', '').replace('-', ' ')
+                def safe_int(value_str, default=0):
+                    try:
+                        return int(float(value_str.strip()) if value_str.strip() else default)
+                    except (TypeError, ValueError):
+                        return default
 
-                    if search_lower not in name_lower and name_lower not in search_lower:
-                        continue
+                fighter_data = {
+                    'name': name,
+                    'height': self._parse_height(cells[3].get_text(strip=True)),
+                    'weight': self._parse_weight(cells[4].get_text(strip=True)),
+                    'reach': self._parse_reach(cells[5].get_text(strip=True)),
+                    'stance': cells[6].get_text(strip=True) or 'Orthodox',
+                    'wins': safe_int(cells[7].get_text(strip=True)),
+                    'losses': safe_int(cells[8].get_text(strip=True)),
+                    'draws': safe_int(cells[9].get_text(strip=True)),
+                }
 
-                    name = full_name
+                profile_url = name_link.get('href')
+                if profile_url:
+                    logger.debug("Fetching detailed stats from: %s", profile_url)
+                    detailed_stats = self.get_fighter_detailed_stats(profile_url)
+                    fighter_data.update(detailed_stats)
 
-                    print(f"Found fighter: {name}")
+                fighter_data.setdefault('age', 30)
+                fighter_data['weight_class'] = self._infer_weight_class(fighter_data.get('weight', 0))
+                fighter_data['ranking'] = None
 
-                    # Debug: mostrar contenido de cells
-                    print(f"DEBUG: Found {len(cells)} cells")
-                    for i, cell in enumerate(cells[:10]):
-                        print(f"  Cell[{i}]: {cell.get_text(strip=True)[:50]}")
+                # Estadísticas con defaults
+                fighter_data.setdefault('striking_accuracy', 50.0)
+                fighter_data.setdefault('striking_defense', 55.0)
+                fighter_data.setdefault('takedown_accuracy', 40.0)
+                fighter_data.setdefault('takedown_defense', 70.0)
 
-                    # Extraer datos básicos con manejo seguro
-                    def safe_int(value_str, default=0):
-                        try:
-                            return int(float(value_str.strip()) if value_str.strip() else default)
-                        except:
-                            return default
+                logger.info("Successfully scraped: %s", fighter_data['name'])
+                return fighter_data
 
-                    fighter_data = {
-                        'name': name,
-                        'height': self._parse_height(cells[3].get_text(strip=True)),
-                        'weight': self._parse_weight(cells[4].get_text(strip=True)),
-                        'reach': self._parse_reach(cells[5].get_text(strip=True)),
-                        'stance': cells[6].get_text(strip=True) or 'Orthodox',
-                        'wins': safe_int(cells[7].get_text(strip=True)),
-                        'losses': safe_int(cells[8].get_text(strip=True)),
-                        'draws': safe_int(cells[9].get_text(strip=True)),
-                    }
-
-                    # Obtener profile link para stats detalladas
-                    profile_link = name_link
-                    if profile_link:
-                        profile_url = profile_link.get('href')
-                        print(f"Fetching detailed stats from: {profile_url}")
-                        detailed_stats = self.get_fighter_detailed_stats(profile_url)
-                        fighter_data.update(detailed_stats)
-
-                    # Calcular campos adicionales
-                    fighter_data['age'] = fighter_data.get('age', 30)  # Default
-                    fighter_data['weight_class'] = self._infer_weight_class(fighter_data.get('weight', 0))
-                    fighter_data['ranking'] = None  # Se puede actualizar con Sherdog después
-
-                    # Estadísticas con defaults
-                    fighter_data.setdefault('striking_accuracy', 50.0)
-                    fighter_data.setdefault('striking_defense', 55.0)
-                    fighter_data.setdefault('takedown_accuracy', 40.0)
-                    fighter_data.setdefault('takedown_defense', 70.0)
-
-                    print(f"Successfully scraped: {fighter_data['name']}")
-                    return fighter_data
-
-            print(f"Fighter not found: {fighter_name}")
+            logger.warning("Fighter not found: %s", fighter_name)
             return None
 
         except Exception as e:
-            print(f"Error scraping fighter {fighter_name}: {e}")
+            logger.warning("Error scraping fighter %s: %s", fighter_name, e)
             return None
     
     def get_fighter_detailed_stats(self, profile_url):
         """Obtener estadísticas detalladas de un luchador"""
         try:
-            response = self.session.get(profile_url, timeout=10)
+            response = self._get(profile_url, timeout=10)
             soup = BeautifulSoup(response.content, 'html.parser')
             
             stats = {}
-            
-            # Estadísticas de striking
-            striking_stats = soup.find_all('div', class_='b-list__box-list-item')
-            for stat in striking_stats:
+            for stat in soup.find_all('li', class_='b-list__box-list-item'):
                 label = stat.find('i', class_='b-list__box-item-title')
-                value = stat.find('i', class_='b-list__box-item-value')
-                
-                if label and value:
-                    label_text = label.get_text(strip=True)
-                    value_text = value.get_text(strip=True)
-                    
-                    stats[self._normalize_stat_name(label_text)] = self._parse_stat_value(value_text)
+                if not label:
+                    continue
+                label_text = label.get_text(strip=True).rstrip(':')
+                full_text = stat.get_text(' ', strip=True)
+                value_text = full_text[len(label.get_text(strip=True)):].strip()
+                if label_text == 'DOB':
+                    try:
+                        birthday = datetime.strptime(value_text, '%b %d, %Y').date()
+                    except ValueError:
+                        continue
+                    today = date.today()
+                    stats['age'] = today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+                else:
+                    key = self._normalize_stat_name(label_text)
+                    if key in {'striking_accuracy', 'striking_defense', 'takedown_accuracy', 'takedown_defense'}:
+                        # '--' = sin peleas UFC registradas: no guardar 0.0, dejar que apliquen los defaults
+                        if value_text.replace('%', '').strip() in ('', '--'):
+                            continue
+                        stats[key] = self._parse_stat_value(value_text)
             
             # Historial de peleas
             fight_history = []
@@ -154,11 +215,20 @@ class MMADataCollector:
                     }
                     fight_history.append(fight)
             
+            # Peleador sin peleas UFC registradas: UFCStats muestra 0% en las 4 métricas (o '--').
+            # Eso no es rendimiento nulo sino dato desconocido: omitirlas para que apliquen los defaults.
+            stat_keys = {'striking_accuracy', 'striking_defense', 'takedown_accuracy', 'takedown_defense'}
+            present = stat_keys & stats.keys()
+            if len(present) == len(stat_keys) and all(stats[k] == 0.0 for k in present):
+                logger.info("No UFC stats yet for %s (all 0%%): using defaults", profile_url)
+                for k in present:
+                    del stats[k]
+
             stats['fight_history'] = fight_history
             return stats
             
         except Exception as e:
-            print(f"Error getting detailed stats: {e}")
+            logger.warning("Error getting detailed stats from %s: %s", profile_url, e)
             return {}
     
     def _parse_height(self, height_str):
@@ -176,8 +246,7 @@ class MMADataCollector:
                 inches = float(height_str.replace('"', '').strip())
                 return inches * 2.54
         except Exception as e:
-            print(f"Warning: Could not parse height '{height_str}': {e}")
-            pass
+            logger.warning("Could not parse height '%s': %s", height_str, e)
         return None
     
     def _infer_weight_class(self, weight_lbs):
@@ -212,8 +281,7 @@ class MMADataCollector:
             weight_lbs = float(weight_str.replace('lbs', '').replace('.', '').strip())
             return weight_lbs
         except Exception as e:
-            print(f"Warning: Could not parse weight '{weight_str}': {e}")
-            pass
+            logger.warning("Could not parse weight '%s': %s", weight_str, e)
         return None
 
     def _parse_reach(self, reach_str):
@@ -232,8 +300,7 @@ class MMADataCollector:
                 reach_inches = float(reach_str.replace('"', '').strip())
                 return reach_inches * 2.54
         except Exception as e:
-            print(f"Warning: Could not parse reach '{reach_str}': {e}")
-            pass
+            logger.warning("Could not parse reach '%s': %s", reach_str, e)
         return None
     
     def _normalize_stat_name(self, stat_name):
@@ -243,6 +310,7 @@ class MMADataCollector:
             'Str. Acc.': 'striking_accuracy',
             'SApM': 'significant_strikes_absorbed_per_minute',
             'Str. Def.': 'striking_defense',
+            'Str. Def': 'striking_defense',
             'TD Avg.': 'takedowns_average',
             'TD Acc.': 'takedown_accuracy',
             'TD Def.': 'takedown_defense',

@@ -82,9 +82,20 @@
                     <div class="space-y-4">
                         <div>
                             <label for="fighterA" class="block text-sm font-medium text-canvas-muted mb-2">Peleador</label>
-                            <input type="text" id="fighterA"
-                                class="w-full px-3 py-2 bg-arena border border-arena-line rounded-md text-canvas placeholder-canvas-faint focus:outline-none focus:ring-2 focus:ring-corner-red"
-                                placeholder="p. ej., Jon Jones">
+                            <div class="relative">
+                                <input type="text" id="fighterA" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fighterASuggestions"
+                                    class="w-full px-3 py-2 bg-arena border border-arena-line rounded-md text-canvas placeholder-canvas-faint focus:outline-none focus:ring-2 focus:ring-corner-red"
+                                    placeholder="p. ej., Jon Jones">
+                                <ul id="fighterASuggestions" class="suggestions suggestions-red hidden" role="listbox"></ul>
+                            </div>
+                            <div id="fighterALookup" class="hidden">
+                                <div class="lookup-row">
+                                    <span class="lookup-text"><i class="fa-solid fa-circle-info"></i> <span class="lookup-message">No está en la base local.</span></span>
+                                    <button type="button" class="lookup-btn lookup-btn-red" data-input="fighterA">
+                                        <i class="fa-solid fa-magnifying-glass"></i> Buscar en UFCStats
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                         <div id="fighterAStats" class="hidden">
                             <div class="grid grid-cols-2 gap-2 text-sm">
@@ -114,9 +125,20 @@
                     <div class="space-y-4">
                         <div>
                             <label for="fighterB" class="block text-sm font-medium text-canvas-muted mb-2">Peleador</label>
-                            <input type="text" id="fighterB"
-                                class="w-full px-3 py-2 bg-arena border border-arena-line rounded-md text-canvas placeholder-canvas-faint focus:outline-none focus:ring-2 focus:ring-corner-blue"
-                                placeholder="p. ej., Stipe Miocic">
+                            <div class="relative">
+                                <input type="text" id="fighterB" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fighterBSuggestions"
+                                    class="w-full px-3 py-2 bg-arena border border-arena-line rounded-md text-canvas placeholder-canvas-faint focus:outline-none focus:ring-2 focus:ring-corner-blue"
+                                    placeholder="p. ej., Stipe Miocic">
+                                <ul id="fighterBSuggestions" class="suggestions suggestions-blue hidden" role="listbox"></ul>
+                            </div>
+                            <div id="fighterBLookup" class="hidden">
+                                <div class="lookup-row">
+                                    <span class="lookup-text"><i class="fa-solid fa-circle-info"></i> <span class="lookup-message">No está en la base local.</span></span>
+                                    <button type="button" class="lookup-btn lookup-btn-blue" data-input="fighterB">
+                                        <i class="fa-solid fa-magnifying-glass"></i> Buscar en UFCStats
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                         <div id="fighterBStats" class="hidden">
                             <div class="grid grid-cols-2 gap-2 text-sm">
@@ -166,6 +188,14 @@
                             <i class="fa-solid fa-trophy"></i> Title Fight
                         </span>
                     </label>
+                </div>
+            </div>
+
+            <!-- Error inline (reemplaza a los alert()) -->
+            <div id="errorBanner" class="hidden" role="alert">
+                <div class="error-banner">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span id="errorMessage"></span>
                 </div>
             </div>
 

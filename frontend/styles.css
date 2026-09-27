@@ -190,3 +190,145 @@
         transform: rotate(360deg);
     }
 }
+
+/* --- Autocompletado de peleadores (inyectado por index.js) --- */
+.suggestions {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 30;
+    margin: 0;
+    padding: 0.25rem;
+    list-style: none;
+    background: #1D1D27;
+    border: 1px solid #2A2A36;
+    border-radius: 0.5rem;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+    max-height: 16rem;
+    overflow-y: auto;
+}
+
+.suggestion-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    border-left: 3px solid transparent;
+    color: #E7E5E4;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.suggestion-item:hover,
+.suggestion-item.is-active {
+    background: #14141B;
+}
+
+.suggestions-red .suggestion-item:hover,
+.suggestions-red .suggestion-item.is-active {
+    border-left-color: #DC2626;
+}
+
+.suggestions-blue .suggestion-item:hover,
+.suggestions-blue .suggestion-item.is-active {
+    border-left-color: #2563EB;
+}
+
+.suggestion-name {
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.suggestion-meta {
+    font-family: "Barlow Condensed", Impact, sans-serif;
+    font-weight: 700;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #9CA3AF;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* --- Fallback "Buscar en UFCStats" cuando la base local no tiene al peleador --- */
+.lookup-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: #9CA3AF;
+}
+
+.lookup-row.is-notfound .lookup-message,
+.lookup-row.is-error .lookup-message {
+    color: #E7E5E4;
+}
+
+.lookup-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 0.375rem;
+    border: 1px solid;
+    background: transparent;
+    font-family: "Barlow Condensed", Impact, sans-serif;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.lookup-btn-red {
+    color: #EF4444;
+    border-color: #DC2626;
+}
+
+.lookup-btn-red:hover {
+    background: rgba(220, 38, 38, 0.15);
+}
+
+.lookup-btn-blue {
+    color: #3B82F6;
+    border-color: #2563EB;
+}
+
+.lookup-btn-blue:hover {
+    background: rgba(37, 99, 235, 0.15);
+}
+
+.lookup-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
+/* --- Error inline (reemplaza a los alert()) --- */
+.error-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    max-width: 40rem;
+    margin: 0 auto 1.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    background: rgba(127, 29, 29, 0.35);
+    border: 1px solid #DC2626;
+    color: #E7E5E4;
+    font-size: 0.9rem;
+}
+
+.error-banner i {
+    color: #EF4444;
+    margin-top: 0.15rem;
+    flex-shrink: 0;
+}

@@ -1,3 +1,61 @@
+# Plan: Búsqueda/carga de peleadores — concurrencia + scraper + UI (2026-09-26)
+
+**Síntoma reportado (owner):** "no encuentro a los peleadores (probar con las peleas de hoy), y aunque aparezcan no cargan bien".
+**Diagnóstico (Muad'Dib, con evidencia en vivo contra la API local):**
+1. UFCStats sirve desde ~2026-07 un interstitial JS ("Checking your browser…": proof-of-work sha256 sobre `nonce:n`, `POST /__c`, cookie `_fmc`) → el scraper ve 0 filas → ningún peleador nuevo (p. ej. la cartelera de hoy, UFC Fight Night Rosas Jr. vs Barcelos) puede agregarse; `/predict` → 404 "not found".
+2. El parser de perfil NUNCA funcionó (busca `b-list__box-item-value`, que no existe en el HTML) → los 37 peleadores del CSV tienen stats default 50/55/40/70 y edad 30.
+3. Los 37 peleadores están stale (>7 días) → cada `/predict` scrapea 2 veces con `requests` síncrono dentro de `async def` → bloquea el event loop (medido: `/search` tarda 0.30 s vs 0.002 s durante un predict cuyo scrape falla rápido; con el scraper arreglado serían varios segundos de congelamiento de la búsqueda del otro peleador).
+4. `/search/fighters/(` → 500 (el query se trata como regex). Redis caído → `/predict` 500.
+5. Frontend: un solo timer de debounce para ambos inputs (escribir en B cancela la búsqueda de A), respuestas fuera de orden pisan el resultado, y con 0 resultados el record anterior queda visible ("aparece" pero es otro peleador) → predict 404. Errores vía `alert()`.
+6. La letra de búsqueda en UFCStats se toma de la última palabra: "Raul Rosas Jr." → 'J' (está bajo R).
+
+**Roles:** Muad'Dib planea/verifica/integra + frontend · HalJordan implementa backend (scraper, API) y revisa el diff final · Owner: reactivar `OPENAI_API_KEY` al cerrar y redeploy al homelab.
+**Restricción:** `OPENAI_API_KEY` comentada en `api/.env` (no gastar tokens); Ollama apagado → el análisis LLM devuelve el texto de error esperado.
+
+## Fase 1 — Scraper (HalJordan, brief `.collab/briefs/fighter-lookup-scraper.md`)
+- [x] 1.1 Fixtures offline en `tests/fixtures/` (challenge, lista R recortada, perfil Rosas Jr.) — Muad'Dib
+- [x] 1.2 Resolver el challenge PoW de UFCStats en `MMADataCollector` (cookie en la `requests.Session`, un reintento por request)
+- [x] 1.3 Parser de perfil real (valor = texto del `li` menos el título; DOB → age); letra por apellido sin sufijos Jr./Sr./III; match exacto antes que substring
+- [x] 1.4 Rate limit 1 s entre requests; `print` → `logging`
+- [x] 1.5 `tests/test_data_collection.py` verde (sin red)
+- [x] 1.6 Verificación en vivo (Muad'Dib): `search_and_scrape_fighter("Raul Rosas Jr.")` → 12-1-0 con stats reales
+
+## Fase 2 — API no bloqueante (HalJordan, brief `.collab/briefs/fighter-lookup-api.md`)
+- [x] 2.1 `get_fighter_data` en threadpool (`run_in_threadpool`) y ambos peleadores en paralelo (`asyncio.gather`)
+- [x] 2.2 Lock + escritura atómica del CSV; filas nuevas restringidas a las columnas del CSV
+- [x] 2.3 Búsqueda con `regex=False` + strip + exacto case-insensitive; `/fighter/{name}` devuelve el nombre canónico
+- [x] 2.4 Cache Redis tolerante a fallos (timeouts 2 s; warning y seguir sin cache)
+- [x] 2.5 Verificación en vivo (Muad'Dib): `/search` responde en ms durante un `/predict` que scrapea; `/search/fighters/%28` → 200
+
+## Fase 3 — Frontend (Muad'Dib, skill `mma-ui-theme`)
+- [x] 3.1 Debounce y número de secuencia por input (no pisar resultados fuera de orden)
+- [x] 3.2 Lista de sugerencias clickeable (nombre canónico → input); ocultar stats cuando no hay resultados
+- [x] 3.3 Fallback "Buscar en UFCStats" (`GET /fighter/{name}`) cuando no hay resultados locales
+- [x] 3.4 Errores inline (sin `alert()`)
+
+## Fase 4 — Cierre
+- [x] 4.1 pytest completo verde; paridad de `engineer_fight_features` (la probabilidad de Jon Jones vs Stipe cambia al refrescar stats reales: documentar)
+- [x] 4.2 Smoke en navegador: `/ui/` → "Rosas" → sugerencia → "Barcelos" → predecir → resultado
+- [x] 4.3 Review de HalJordan sin blockers (gate de consenso, máx. 3 rondas) → commit local
+- [x] 4.4 CLAUDE.md + AGENTS.md sincronizados; `tasks/lessons.md` si hubo corrección
+
+## Review (2026-09-26, cierre por consenso Muad'Dib ↔ HalJordan)
+
+**Gate de consenso:** 3 rondas. R1 (`.collab/briefs/fighter-lookup-review.md`): BLOCKERS FOUND — 3 HIGH (Redis síncrono en el loop; `seq` solo al vencer el debounce; substring ambiguo en el scraper) + 3 MEDIUM + 2 LOW, todos aceptados y corregidos por Muad'Dib. R2 (`-r2.md`): BLOCKERS FOUND — 2 HIGH (`_search_in_database` elegía la primera coincidencia parcial; stats desconocidas guardadas como 0.0), aceptados; al verificar en vivo apareció además el bug de actualización de filas existentes (`df.loc[...] = lista` → los 37 peleadores viejos nunca se refrescaban), corregido con `CSV_PATH` testeable. R3 (`-r3.md`; la primera corrida se colgó en stdin y fue matada y relanzada, ver `.collab/delegations/20260927T005156Z-note.txt`): **NO BLOCKERS**, 1 LOW (tres `--` + un `0%` legítimo descartaba el cero) aplicado post-gate en una línea + test. Ejecutores: HalJordan implementó scraper y API (`20260927T001632Z`, `20260927T002255Z`); Muad'Dib hizo frontend, fixtures, tests de `main.py`, las correcciones de las rondas y la documentación.
+
+**Evidencia (salidas reales):**
+- `pytest tests/ -q` → 46 passed (15 LLM + 22 scraper offline + 9 main.py).
+- Paridad: mismas filas stale de Jon Jones vs Stipe → `p=0.7760478854179382` == baseline (`engineer_fight_features` intacto). Con datos refrescados la probabilidad cambia por diseño (stats reales en vez de defaults).
+- Concurrencia: 8 requests a `/search` durante un `/predict` que scrapea 2 peleadores nuevos (4.0 s) → 1–2 ms cada una (antes 300 ms bloqueadas con scrape fallido; habrían sido segundos con scrape real).
+- Scraper en vivo: Raul Rosas Jr. 12-1-0 (age 21, 42/52/54/25), Raoni Barcelos 22-5-0, Rodolfo Vieira 12-5-0, Robert Bryczek 18-8-0, Osmanli/Akylbek (sin peleas UFC → defaults 50/55/40/70), "Topuria" → Ilia Topuria, "Rodriguez"/"Silva" ambiguos → 404, inexistente → None en 0.4 s. Jon Jones stale → refrescado 28-1-0 con stats reales.
+- Robustez: `/search/fighters/%28` → 200 `[]`; Redis caído (`REDIS_URL` a puerto cerrado) → `/predict` 200 con warnings.
+- UI en Chrome: sugerencias por corner, teclado ↑/↓/Enter, récord solo con match exacto/único, fallback "Buscar en UFCStats" (Vieira y Bryczek agregados desde la UI), predict end-to-end con 5 factores, errores inline en español; sin errores de consola.
+- `data/fighters_complete.csv` quedó con 43 filas (6 peleadores de la cartelera de hoy + refresco de Jon Jones); es dato de runtime y NO va en el commit.
+
+**Pendiente del owner:** reactivar `OPENAI_API_KEY` en `api/.env`; redeploy al homelab (`rsync` + `docker compose up -d --build`, plan de deploy más abajo); opcional: `git push`.
+
+---
+
 # Plan: Deploy al Home Lab vía Tailscale (2026-09-26)
 
 **Objetivo:** copiar (NO mover) el proyecto al homelab (`simon@homelab`, Debian 13) y servirlo solo dentro del tailnet, accesible únicamente desde `macbook-pro-de-said` (extensible a más devices después).
@@ -23,18 +81,18 @@ Sin Ollama en el server (qwen2.5:7b no cabe en 6 GB); LLM = OpenAI, con degradac
 - [x] A6 CLAUDE.md + README sincronizados (sección Deploy Home Lab)
 
 ## Fase B — Prerrequisitos humanos (Owner)
-- [ ] B1 Despertar el homelab (abrir tapa) y confirmar `tailscale ping homelab` responde
-- [ ] B2 Llave SSH (paso 7 del plan del homelab): `ssh-copy-id` desde la Mac para que el agente pueda operar sin contraseña
-- [ ] B3 Correr como sudo `~/setup/mma_prereqs.sh` (Muad'Dib lo escribe): Docker oficial + compose plugin, rsync, `simon` al grupo docker, `tailscale set --operator=simon`, lid-switch=ignore
+- [x] B1 Despertar el homelab (abrir tapa) y confirmar `tailscale ping homelab` responde
+- [x] B2 Llave SSH (paso 7 del plan del homelab): `ssh-copy-id` desde la Mac para que el agente pueda operar sin contraseña
+- [x] B3 Correr como sudo `~/setup/mma_prereqs.sh` (Muad'Dib lo escribe): Docker oficial + compose plugin, rsync, `simon` al grupo docker, `tailscale set --operator=simon`, lid-switch=ignore
 - [ ] B4 Admin console Tailscale: MagicDNS + HTTPS certs activos; ACL que restrinja homelab a solo el MacBook (policy lista en `tasks/deploy/tailnet-policy.hujson`)
 
 ## Fase C — Transferencia y despliegue (Muad'Dib)
-- [ ] C1 (antes: capturar baseline de listeners del server con verify_plan.sh) `rsync` (copia, sin `--delete`, sin tocar origen) a `~/apps/mma-stuff/` excluyendo venv/.git/.pytest_cache/api/.env; `.env` por scp con chmod 600
-- [ ] C2 `docker compose up -d --build`; health 200 en 127.0.0.1:8000 desde el server
-- [ ] C3 `tailscale serve --bg 8000` (nunca funnel); `ss -tln` sin nada nuevo en 0.0.0.0
-- [ ] C4 Desde la Mac: `https://homelab.<tailnet>.ts.net/` health + `/ui/` carga + /predict paridad
+- [x] C1 (antes: capturar baseline de listeners del server con verify_plan.sh) `rsync` (copia, sin `--delete`, sin tocar origen) a `~/apps/mma-stuff/` excluyendo venv/.git/.pytest_cache/api/.env; `.env` por scp con chmod 600
+- [x] C2 `docker compose up -d --build`; health 200 en 127.0.0.1:8000 desde el server
+- [x] C3 `tailscale serve --bg 8000` (nunca funnel); `ss -tln` sin nada nuevo en 0.0.0.0
+- [x] C4 Desde la Mac: `https://homelab.<tailnet>.ts.net/` health + `/ui/` carga + /predict paridad
 - [ ] C5 Verificar ACL: el acceso depende de la policy (cualquier device nuevo sin grant no entra)
-- [ ] C6 Mac intacta: manifest de baseline idéntico (salvo archivos del scope)
+- [x] C6 Mac intacta: manifest de baseline idéntico (salvo archivos del scope)
 
 ## Review
 _(llenar al ejecutar)_

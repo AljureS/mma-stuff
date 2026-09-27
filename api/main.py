@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+import asyncio
 import pickle
 import pandas as pd
 import numpy as np
@@ -11,9 +12,11 @@ import logging
 import redis
 import json
 import os
+import threading
 from dotenv import load_dotenv
 from pathlib import Path
 import sys
+from starlette.concurrency import run_in_threadpool
 
 # Add scripts directory to path for data_collection
 sys.path.append(str(Path(__file__).parent.parent / 'scripts'))
@@ -51,13 +54,20 @@ app.add_middleware(
 
 # Redis para cache
 redis_client = redis.Redis.from_url(
-    os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+    os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+    decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2,
 )
+
+# Ruta única del CSV de peleadores (la API lo lee al arrancar y lo reescribe en runtime)
+CSV_PATH = Path(__file__).parent.parent / 'data' / 'fighters_complete.csv'
 
 # Modelos globales (cargar al inicio)
 prediction_model = None
 fighter_database = None
 llm_client = None
+_csv_lock = threading.Lock()
 
 class FightPredictionRequest(BaseModel):
     fighter_a: str
@@ -99,8 +109,7 @@ async def load_models():
             prediction_model = pickle.load(f)
 
         # Cargar base de datos de luchadores
-        csv_path = base_path / 'data' / 'fighters_complete.csv'
-        fighter_database = pd.read_csv(csv_path)
+        fighter_database = pd.read_csv(CSV_PATH)
 
         # Inicializar LLM client
         llm_client = get_llm_client()
@@ -132,7 +141,12 @@ async def predict_fight(request: FightPredictionRequest):
     try:
         # Check cache first (key normalizada: sin distinguir orden a/b ni casing)
         cache_key = _normalize_cache_key(request.fighter_a, request.fighter_b)
-        cached_result = redis_client.get(cache_key)
+        try:
+            # Cliente Redis síncrono: fuera del event loop para que un Redis colgado no congele /search
+            cached_result = await run_in_threadpool(redis_client.get, cache_key)
+        except redis.RedisError as e:
+            logger.warning("Redis cache read failed: %s", e)
+            cached_result = None
 
         if cached_result:
             cached = json.loads(cached_result)
@@ -145,10 +159,11 @@ async def predict_fight(request: FightPredictionRequest):
         
         # Validar que los luchadores existen
         logger.info(f"Searching for fighter_a: '{request.fighter_a}'")
-        fighter_a_data = get_fighter_data(request.fighter_a)
-
         logger.info(f"Searching for fighter_b: '{request.fighter_b}'")
-        fighter_b_data = get_fighter_data(request.fighter_b)
+        fighter_a_data, fighter_b_data = await asyncio.gather(
+            run_in_threadpool(get_fighter_data, request.fighter_a),
+            run_in_threadpool(get_fighter_data, request.fighter_b),
+        )
 
         # Validación detallada
         missing_fighters = []
@@ -192,7 +207,10 @@ async def predict_fight(request: FightPredictionRequest):
         )
         
         # Cache result for 1 hour
-        redis_client.setex(cache_key, 3600, response.json())
+        try:
+            await run_in_threadpool(redis_client.setex, cache_key, 3600, response.json())
+        except redis.RedisError as e:
+            logger.warning("Redis cache write failed: %s", e)
         
         logger.info(f"Generated prediction for {request.fighter_a} vs {request.fighter_b}")
         return response
@@ -208,7 +226,7 @@ async def predict_fight(request: FightPredictionRequest):
 async def get_fighter_stats(fighter_name: str):
     """Obtener estadísticas completas de un luchador"""
     
-    fighter_data = get_fighter_data(fighter_name)
+    fighter_data = await run_in_threadpool(get_fighter_data, fighter_name)
     
     if not fighter_data:
         raise HTTPException(status_code=404, detail=f"Fighter '{fighter_name}' not found")
@@ -221,7 +239,7 @@ async def get_fighter_stats(fighter_name: str):
     ranking = int(ranking_value) if ranking_value is not None else None
 
     return FighterStatsResponse(
-        name=fighter_name,
+        name=fighter_data['name'],
         record=record,
         stats=_sanitize_csv_record(fighter_data),
         ranking=ranking
@@ -233,10 +251,14 @@ async def search_fighters(query: str, limit: int = 10):
     
     if fighter_database is None:
         raise HTTPException(status_code=503, detail="Fighter database not loaded")
+
+    q = query.strip()
+    if not q:
+        return {'query': query, 'results': [], 'count': 0}
     
     # Búsqueda fuzzy por nombre
     matches = fighter_database[
-        fighter_database['name'].str.contains(query, case=False, na=False)
+        fighter_database['name'].str.contains(q, case=False, na=False, regex=False)
     ].head(limit)
     
     results = []
@@ -337,12 +359,13 @@ def get_fighter_data(fighter_name: str) -> Optional[Dict]:
 
             if fresh_data:
                 logger.info(f"Successfully scraped data for '{fighter_name}'")
-                # 4. Actualizar/agregar al CSV
-                _update_or_add_to_csv(fresh_data)
-                # 5. Recargar fighter_database en memoria
-                _reload_fighter_database()
-                # 6. Retornar datos frescos
-                return _search_in_database(fighter_name)
+                with _csv_lock:
+                    # 4. Actualizar/agregar al CSV
+                    _update_or_add_to_csv(fresh_data)
+                    # 5. Recargar fighter_database en memoria
+                    _reload_fighter_database()
+                # 6. Retornar datos frescos por el nombre canónico de UFCStats (match exacto garantizado)
+                return _search_in_database(fresh_data['name'])
             else:
                 logger.warning(f"Web scraping failed for '{fighter_name}'")
 
@@ -361,20 +384,34 @@ def _search_in_database(fighter_name: str) -> Optional[Dict]:
     if fighter_database is None:
         return None
 
+    q = fighter_name.strip()
+    if not q:
+        return None
+
     # Búsqueda exacta primero
-    exact_match = fighter_database[fighter_database['name'] == fighter_name]
+    exact_match = fighter_database[fighter_database['name'] == q]
 
     if not exact_match.empty:
         return exact_match.iloc[0].to_dict()
 
-    # Búsqueda fuzzy
-    fuzzy_match = fighter_database[
-        fighter_database['name'].str.contains(fighter_name, case=False, na=False)
+    exact_match = fighter_database[
+        fighter_database['name'].str.strip().str.lower() == q.lower()
     ]
 
-    if not fuzzy_match.empty:
-        return fuzzy_match.iloc[0].to_dict()
+    if not exact_match.empty:
+        return exact_match.iloc[0].to_dict()
 
+    # Búsqueda fuzzy: solo si el substring identifica a UN peleador
+    # ("Silva" con Natalia Silva y Jean Silva en el CSV -> None, nunca la primera fila en silencio)
+    fuzzy_match = fighter_database[
+        fighter_database['name'].str.contains(q, case=False, na=False, regex=False)
+    ]
+
+    if len(fuzzy_match) == 1:
+        return fuzzy_match.iloc[0].to_dict()
+    if len(fuzzy_match) > 1:
+        logger.warning("Ambiguous fighter query '%s': %d matches in CSV (%s)", q, len(fuzzy_match),
+                       ', '.join(fuzzy_match['name'].head(5)))
     return None
 
 
@@ -404,7 +441,7 @@ def _update_or_add_to_csv(fighter_data: Dict):
     """Actualizar o agregar peleador al CSV con timestamp"""
     global fighter_database
 
-    csv_path = Path(__file__).parent.parent / 'data' / 'fighters_complete.csv'
+    csv_path = CSV_PATH
 
     # Agregar timestamp
     fighter_data['last_updated'] = datetime.now().isoformat()
@@ -416,29 +453,32 @@ def _update_or_add_to_csv(fighter_data: Dict):
     existing_index = df[df['name'] == fighter_data['name']].index
 
     if not existing_index.empty:
-        # Actualizar fila existente
+        # Actualizar fila existente. Listas/dicts (fight_history) van como str: asignar una lista
+        # con df.loc lanza "Must have equal len keys and value" y dejaba al peleador stale para siempre.
         for key, value in fighter_data.items():
             if key in df.columns:
-                df.loc[existing_index[0], key] = value
+                if isinstance(value, (list, dict)):
+                    value = str(value)
+                df.at[existing_index[0], key] = value
         logger.info(f"Updated existing fighter: {fighter_data['name']}")
     else:
         # Agregar nueva fila
-        new_row = pd.DataFrame([fighter_data])
+        new_row = pd.DataFrame([{k: v for k, v in fighter_data.items() if k in df.columns}])
         df = pd.concat([df, new_row], ignore_index=True)
         logger.info(f"Added new fighter: {fighter_data['name']}")
 
     # Guardar CSV
-    df.to_csv(csv_path, index=False)
+    tmp = csv_path.with_name(csv_path.name + '.tmp')
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, csv_path)
 
 
 def _reload_fighter_database():
     """Recargar fighter_database en memoria desde CSV"""
     global fighter_database
 
-    csv_path = Path(__file__).parent.parent / 'data' / 'fighters_complete.csv'
-
     try:
-        fighter_database = pd.read_csv(csv_path)
+        fighter_database = pd.read_csv(CSV_PATH)
         logger.info(f"Reloaded fighter_database: {len(fighter_database)} fighters")
     except Exception as e:
         logger.error(f"Failed to reload fighter_database: {e}", exc_info=True)
