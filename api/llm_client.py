@@ -1,5 +1,5 @@
 """
-LLM Client con fallback: OpenAI (gpt-4o-mini) -> Ollama (Qwen2.5:7b)
+LLM Client con fallback: OpenAI (gpt-6-luna, reasoning_effort="none") -> Ollama (Qwen2.5:7b)
 
 Características:
 - Reintentos exponenciales con backoff
@@ -87,7 +87,7 @@ class LLMClient:
         openai_api_key: Optional[str] = None,
         openai_base_url: Optional[str] = None,
         ollama_url: str = "http://localhost:11434",
-        openai_model: str = "gpt-4o-mini",
+        openai_model: str = "gpt-6-luna",
         ollama_model: str = "qwen2.5:7b",
         max_retries: int = 3,
         timeout_seconds: int = 30,
@@ -242,12 +242,18 @@ class LLMClient:
                     messages.append({"role": "system", "content": system_prompt})
                 messages.append({"role": "user", "content": prompt})
 
+                # Luna admite temperature con el razonamiento desactivado.
+                reasoning_options = {}
+                if self.openai_model == "gpt-6-luna":
+                    reasoning_options["reasoning_effort"] = "none"
+
                 # Llamada a OpenAI
                 response = await self.openai_client.chat.completions.create(
                     model=self.openai_model,
                     max_completion_tokens=max_tokens,
                     temperature=temperature,
-                    messages=messages
+                    messages=messages,
+                    **reasoning_options
                 )
 
                 latency_ms = int((time.time() - start_time) * 1000)
@@ -396,7 +402,7 @@ def get_llm_client() -> LLMClient:
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_base_url=os.getenv("OPENAI_BASE_URL"),
             ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-            openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            openai_model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
             ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
             max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
             timeout_seconds=30,  # OpenAI: siempre 30s (API remota rápida)

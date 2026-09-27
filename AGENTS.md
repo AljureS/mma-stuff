@@ -19,7 +19,7 @@ Proyecto en **fase de desarrollo/prototipo**, tras el **refactor de limpieza 202
 
 **Implementado y funcional:**
 - API FastAPI (`api/main.py`, 703 LOC) con cache Redis (key normalizada y versionada por `last_updated`, best-effort) y validación Pydantic — 5 endpoints reales + frontend estático en `/ui`. **Fix de concurrencia 2026-09-26:** el scraping (`requests` síncrono) corre en el threadpool de Starlette y para ambos peleadores en paralelo; antes se ejecutaba dentro de los handlers `async def` y congelaba TODO el servidor (la búsqueda del otro corner incluida) mientras duraba.
-- Cliente LLM con fallback OpenAI → Ollama, reintentos, circuit breakers (`api/llm_client.py`) + 15 tests unitarios
+- Cliente LLM con fallback OpenAI → Ollama, reintentos, circuit breakers (`api/llm_client.py`) + 18 tests unitarios. Desde 2026-09-26 el default es `gpt-6-luna`, con `reasoning_effort="none"` explícito.
 - Scraping automático de UFCStats cuando un peleador no existe en el CSV, sus datos superan `FIGHTER_MAX_AGE_HOURS` (24 h), ya pasó su próxima pelea registrada (`next_fight_date` < hoy) o se pide `refresh=true` (`get_fighter_data` en `main.py` → `MMADataCollector.search_and_scrape_fighter`; reglas de frescura 2026-09-26 noche, antes 7 días fijos y sin forma de refrescar: el récord de Raul Rosas Jr. quedaba congelado aunque UFCStats lo actualizara). **Arreglado 2026-09-26:** el collector resuelve el challenge JS anti-bot de UFCStats (proof-of-work sha256 + `POST /__c`, cookie `_fmc`), busca por apellido ignorando sufijos (Jr./Sr./III), prefiere el match exacto y parsea stats REALES del perfil (Str. Acc./Def., TD Acc./Def., edad desde DOB). Antes devolvía 0 filas y el parser de perfil nunca funcionó (todos los peleadores tenían stats default).
 - Frontend HTML/JS/Tailwind que consume la API (rediseño Fight Night 2026-07; autocompletado por corner + fallback "Buscar en UFCStats" + errores inline 2026-09-26; sello "Datos de UFCStats: hace X" + botón "Actualizar" por corner 2026-09-26 noche)
 
@@ -42,7 +42,9 @@ mma-stuff/
 │   ├── agents/                    # Subagentes del refactor: slop-auditor, backend-refactorer,
 │   │                              #   mma-ui-builder, stack-verifier (ver "Tooling de Refactor")
 │   └── skills/                    # Skills: mma-run-stack, slop-audit, mma-ui-theme,
-│                                  #   refactor-verify, sync-claude-md
+│                                  #   refactor-verify, sync-claude-md, deploy-homelab
+│                                  #   (esta última es symlink a .agents/skills/deploy-homelab,
+│                                  #   local y fuera de git vía .git/info/exclude)
 ├── tasks/
 │   ├── todo.md                    # Plan maestro del refactor 2026-07 (checkable) + inventario de slop
 │   ├── lessons.md                 # Correcciones del usuario y reglas aprendidas
@@ -72,7 +74,7 @@ mma-stuff/
 │   └── styles.css                 # Estilos custom del tema
 └── tests/
     ├── __init__.py
-    ├── test_llm_client.py         # 15 tests del cliente LLM (pytest + pytest-asyncio)
+    ├── test_llm_client.py         # 18 tests del cliente LLM (pytest + pytest-asyncio)
     ├── test_data_collection.py    # 24 tests del scraper, offline con fixtures (2026-09-26)
     ├── test_main_search.py        # 6 tests de _search_in_database (main.py) sin servidor ni Redis
     ├── test_main_csv.py           # 4 tests de _update_or_add_to_csv/_reload sobre un CSV temporal (CSV_PATH)
@@ -150,7 +152,7 @@ Fallback OpenAI → Ollama con reintentos y circuit breakers.
 
 ```
 FastAPI → LLMClient (singleton, get_llm_client())
-              ├── 1° OpenAI (AsyncOpenAI, chat.completions, default gpt-4o-mini)
+              ├── 1° OpenAI (AsyncOpenAI, chat.completions, default gpt-6-luna, effort none)
               └── 2° Ollama local (default qwen2.5:7b, POST {OLLAMA_URL}/api/generate)
 ```
 
@@ -165,13 +167,15 @@ FastAPI → LLMClient (singleton, get_llm_client())
 
 **Detalles de la llamada OpenAI:** el system prompt va como primer mensaje (`{"role": "system", ...}`, se omite si está vacío), se usa `max_completion_tokens` (no el deprecado `max_tokens`), y el timeout se pasa explícito al cliente (el default del SDK es 600s y rompería el fast-fallback). `tokens_used` viene de `usage.total_tokens`.
 
+**Selección de modelo (2026-09-26):** tanto el constructor como `get_llm_client()` usan `gpt-6-luna` por defecto; `OPENAI_MODEL` permite sobrescribirlo. Para Luna, la llamada incluye `reasoning_effort="none"` (el default remoto es `medium`) y conserva `temperature`. Para otros modelos se omite ese parámetro, manteniendo compatibilidad con `gpt-4o-mini`; no se configura automáticamente el razonamiento de otros modelos. El prompt y el límite de 800 tokens de `/predict` se mantienen. Tras cambiar modelo hay que reiniciar la API e invalidar la caché `prediction:*` o esperar su TTL de una hora: la key actual no incluye el modelo LLM.
+
 **Circuit breakers:** OpenAI abre tras 5 fallas consecutivas (timeout 60s); Ollama tras 3 (timeout 30s). Pasado el timeout entran en `half_open` para probar recuperación.
 
 **Timeouts (ojo, no es simétrico):** en `get_llm_client()` el timeout de OpenAI está fijo en 30s; `LLM_TIMEOUT` del .env aplica **solo a Ollama** (los modelos locales son más lentos). Si se construye `LLMClient` a mano sin `ollama_timeout_seconds`, Ollama usa 3× el timeout de OpenAI.
 
 **Otros detalles:** sin `OPENAI_API_KEY` el cliente opera en modo solo-Ollama (warning en logs). `health_check()` reporta estado de breakers (keys `openai` y `ollama`) y prueba `GET {OLLAMA_URL}/api/tags` con timeout de 5s. `force_provider=LLMProvider.OLLAMA` salta OpenAI. `LLMResponse` incluye provider, model, latency_ms, tokens_used y fallback_used (se loguea en cada análisis).
 
-**Costo (precios junio 2026):** gpt-4o-mini cuesta $0.15/1M tokens input y $0.60/1M output → un análisis típico (~320 in + 800 out) cuesta ≈ $0.0005, o ~$0.60 por cada 1,000 predicciones. Cambiar de modelo es editar `OPENAI_MODEL` en el .env.
+**Costo (tarifa estándar verificada 2026-09-26):** [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) cuesta $0.10/1M tokens de entrada y $0.50/1M de salida. Con 320 de entrada + 800 de salida, sin caché ni razonamiento, la estimación es $0.000432 por análisis ($0.432 por 1,000); el costo real depende de los tokens consumidos. Cambiar de modelo requiere revisar compatibilidad de parámetros además de editar `OPENAI_MODEL`.
 
 ## Componente 3: Recolección de Datos (`scripts/data_collection.py`)
 
@@ -220,7 +224,7 @@ Leídas realmente por el código:
 ```bash
 OPENAI_API_KEY=sk-proj-...                    # Sin ella: modo solo-Ollama
 OPENAI_BASE_URL=                              # Opcional, base URL custom (comentada en el .env actual)
-OPENAI_MODEL=gpt-4o-mini                      # Default si no se define
+OPENAI_MODEL=gpt-6-luna                       # Default; el cliente envía reasoning_effort="none"
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 LLM_MAX_RETRIES=3
@@ -284,18 +288,18 @@ MacBook ──HTTPS (tailnet)──> tailscale serve (homelab:443) ──> 127.0
 ## Tests
 
 ```bash
-pytest tests/ -v                     # 64 tests: 15 del cliente LLM + 24 del scraper (offline, con fixtures) + 25 de main.py (búsqueda local, escritura del CSV, frescura/refresh/cache key)
+pytest tests/ -v                     # 67 tests: 18 del cliente LLM + 24 del scraper (offline, con fixtures) + 25 de main.py (búsqueda local, escritura del CSV, frescura/refresh/cache key)
 python test_scraping.py              # prueba manual del scraper contra UFCStats (red real)
 ```
 
-Los tests del LLM mockean OpenAI y aiohttp (pytest-asyncio + pytest-mock); los del scraper inyectan una `FakeSession` con HTML real guardado en `tests/fixtures/`; `test_main_search.py`, `test_main_csv.py` y `test_main_freshness.py` importan `main` (sin levantar uvicorn ni conectar a Redis) y monkeypatchean `fighter_database` / `CSV_PATH` / los umbrales de frescura para probar `_search_in_database`, `_update_or_add_to_csv`, `_reload_fighter_database`, `_is_data_fresh`, `get_fighter_data(force_refresh=True)` (collector mockeado) y `_normalize_cache_key` sobre un CSV temporal. El resto de `main.py` (endpoints, threadpool, cache) solo se verifica por ejecución real (ver skill `refactor-verify`).
+Los tests del LLM mockean OpenAI y aiohttp (pytest-asyncio + pytest-mock), incluyendo el contrato de Luna con esfuerzo `none`, los defaults del constructor/factory y el override a `gpt-4o-mini` sin el parámetro de razonamiento; los del scraper inyectan una `FakeSession` con HTML real guardado en `tests/fixtures/`; `test_main_search.py`, `test_main_csv.py` y `test_main_freshness.py` importan `main` (sin levantar uvicorn ni conectar a Redis) y monkeypatchean `fighter_database` / `CSV_PATH` / los umbrales de frescura para probar `_search_in_database`, `_update_or_add_to_csv`, `_reload_fighter_database`, `_is_data_fresh`, `get_fighter_data(force_refresh=True)` (collector mockeado) y `_normalize_cache_key` sobre un CSV temporal. El resto de `main.py` (endpoints, threadpool, cache) solo se verifica por ejecución real (ver skill `refactor-verify`).
 
 ## Stack Tecnológico
 
 - **Backend:** Python, FastAPI 0.104, uvicorn, Pydantic 2.5, pandas, numpy, XGBoost 1.7, scikit-learn (requerida para deserializar el pkl), redis-py, aiohttp, requests + BeautifulSoup4, openai 2.41, python-dotenv — 16 deps totales (podadas de 24 el 2026-07-01)
 - **Frontend:** HTML/JS vanilla + TailwindCSS, Chart.js y Font Awesome por CDN
 - **Infra activa:** Redis (cache). Toda la infra declarada-pero-no-conectada (PostgreSQL, Nginx, Docker, Supervisor) se eliminó en el refactor 2026-07-01.
-- **LLM:** OpenAI gpt-4o-mini (primario) + Ollama Qwen2.5:7b (fallback local)
+- **LLM:** OpenAI gpt-6-luna, `reasoning_effort="none"` (primario) + Ollama Qwen2.5:7b (fallback local)
 
 ## Trabajo Pendiente Prioritario
 

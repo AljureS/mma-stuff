@@ -13,7 +13,7 @@ Navegador (frontend/, :3000)
 FastAPI (api/main.py, :8000) ── cache ──> Redis (:6379)
     │        │
     │        ├─> XGBoost (models/mma_prediction_model.pkl) — 16 features → probabilidades
-    │        ├─> LLM (api/llm_client.py): OpenAI gpt-4o-mini → fallback Ollama qwen2.5:7b
+    │        ├─> LLM (api/llm_client.py): OpenAI gpt-6-luna (effort none) → fallback Ollama qwen2.5:7b
     │        └─> Scraper UFCStats (scripts/data_collection.py) si el peleador falta o >7 días
     ▼
 data/fighters_complete.csv (base de datos viva, la API escribe en runtime)
@@ -39,7 +39,7 @@ cd api && ../venv/bin/python main.py     # :8000, docs en /docs
 python3 -m http.server 3000 --directory frontend
 ```
 
-Configuración LLM en `api/.env` (gitignored): `OPENAI_API_KEY`, `OPENAI_MODEL`, `OLLAMA_URL`, `OLLAMA_MODEL`, `LLM_MAX_RETRIES`, `LLM_TIMEOUT`. Sin API key, opera en modo solo-Ollama.
+Configuración LLM en `api/.env` (gitignored): `OPENAI_API_KEY`, `OPENAI_MODEL`, `OLLAMA_URL`, `OLLAMA_MODEL`, `LLM_MAX_RETRIES`, `LLM_TIMEOUT`. El default es `OPENAI_MODEL=gpt-6-luna`; el cliente envía `reasoning_effort="none"` para Luna. Sin API key, opera en modo solo-Ollama.
 
 ## Deploy en el home lab (solo tailnet)
 
@@ -65,7 +65,7 @@ UI en `https://homelab.<tailnet>.ts.net/ui/`. Quién puede entrar lo decide la p
 ## Tests
 
 ```bash
-venv/bin/python -m pytest tests/ -v   # 46 tests: cliente LLM + scraper (offline, fixtures) + main.py (búsqueda local, CSV)
+venv/bin/python -m pytest tests/ -v   # Suite completa: cliente LLM + scraper offline + main.py
 python test_scraping.py               # prueba manual del scraper (red real)
 ```
 

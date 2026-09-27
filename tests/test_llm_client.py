@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'api'))
 
+import llm_client as llm_module
 from llm_client import LLMClient, LLMProvider, LLMResponse, CircuitBreaker
 
 
@@ -102,7 +103,7 @@ def test_circuit_breaker_resets_on_success():
 
 @pytest.mark.asyncio
 async def test_openai_success(llm_client_with_openai):
-    """Test: OpenAI debe generar respuesta exitosa"""
+    """Test: El cliente por defecto usa Luna sin razonamiento y retorna su respuesta"""
 
     mock_response = make_openai_response("Este es un análisis de MMA detallado.")
 
@@ -111,17 +112,73 @@ async def test_openai_success(llm_client_with_openai):
         'create',
         new_callable=AsyncMock,
         return_value=mock_response
-    ):
+    ) as mock_create:
         response = await llm_client_with_openai.generate(
             prompt="Analiza Jon Jones vs Stipe Miocic",
             max_tokens=500
         )
 
+        mock_create.assert_awaited_once_with(
+            model="gpt-6-luna",
+            max_completion_tokens=500,
+            temperature=0.7,
+            messages=[{"role": "user", "content": "Analiza Jon Jones vs Stipe Miocic"}],
+            reasoning_effort="none"
+        )
         assert response.provider == LLMProvider.OPENAI
+        assert response.model == "gpt-6-luna"
         assert response.content == "Este es un análisis de MMA detallado."
         assert response.tokens_used == 300
         assert not response.fallback_used
         assert response.latency_ms >= 0  # con mocks la llamada puede tardar <1ms
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured_model", [None, "gpt-6-luna", "gpt-4o-mini"])
+async def test_factory_openai_request_respects_model_override(monkeypatch, configured_model):
+    """La factory usa Luna por defecto y omite effort en el override legado"""
+    monkeypatch.setattr(llm_module, "_llm_client", None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    if configured_model is None:
+        monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("OPENAI_MODEL", configured_model)
+
+    client = llm_module.get_llm_client()
+    expected_model = configured_model or "gpt-6-luna"
+    try:
+        with patch.object(
+            client.openai_client.chat.completions,
+            'create',
+            new_callable=AsyncMock,
+            return_value=make_openai_response("Análisis desde el modelo configurado")
+        ) as mock_create:
+            response = await client.generate(
+                prompt="Analiza pelea",
+                system_prompt="Eres un experto en MMA",
+                max_tokens=800,
+                temperature=0.7
+            )
+
+            expected_kwargs = {
+                "model": expected_model,
+                "max_completion_tokens": 800,
+                "temperature": 0.7,
+                "messages": [
+                    {"role": "system", "content": "Eres un experto en MMA"},
+                    {"role": "user", "content": "Analiza pelea"}
+                ]
+            }
+            if expected_model == "gpt-6-luna":
+                expected_kwargs["reasoning_effort"] = "none"
+            mock_create.assert_awaited_once_with(**expected_kwargs)
+            assert response.provider == LLMProvider.OPENAI
+            assert response.model == expected_model
+            assert response.content == "Análisis desde el modelo configurado"
+            assert response.fallback_used is False
+    finally:
+        await client.openai_client.close()
 
 
 @pytest.mark.asyncio

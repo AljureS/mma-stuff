@@ -4,7 +4,7 @@
 
 Sistema LLM para uso personal que usa:
 
-1. **Proveedor primario**: OpenAI gpt-4o-mini (API de OpenAI)
+1. **Proveedor primario**: OpenAI gpt-6-luna con `reasoning_effort="none"` (API de OpenAI)
 2. **Fallback automático**: Ollama con Qwen2.5:7b (local)
 
 **Nota**: Esta guía está enfocada en **ejecución local** para uso personal.
@@ -33,11 +33,11 @@ Sistema LLM para uso personal que usa:
 ┌─────────────┐       ┌──────────────────┐
 │ OpenAI API  │       │  Ollama Local    │
 │             │       │                  │
-│ gpt-4o-mini │ (1°)  │  Qwen2.5:7b      │ (Fallback)
+│ gpt-6-luna  │ (1°)  │  Qwen2.5:7b      │ (Fallback)
 │             │       │                  │
 │ • Calidad   │       │  • Sin costo API │
 │   buena     │       │  • Offline       │
-│ • ~$0.0005  │       │  • Privado       │
+│ • ~$0.00043 │       │  • Privado       │
 │ por análisis│       │                  │
 └─────────────┘       └──────────────────┘
 ```
@@ -57,7 +57,7 @@ Obtén tu key en https://platform.openai.com/api-keys y ponla en `api/.env`:
 
 ```bash
 OPENAI_API_KEY=sk-proj-...          # Tu key de OpenAI
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-6-luna             # El cliente envía reasoning_effort="none"
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 ```
@@ -93,7 +93,7 @@ python main.py
 Verás:
 ```
 INFO: Models and data loaded successfully
-INFO: OpenAI client initialized with model gpt-4o-mini
+INFO: OpenAI client initialized with model gpt-6-luna
 INFO: Uvicorn running on http://0.0.0.0:8000
 ```
 
@@ -189,10 +189,11 @@ LLM_TIMEOUT=180            # Aplica SOLO a Ollama (OpenAI fijo en 30s)
 ### Customizar modelos
 
 ```bash
-# Usar otro modelo de OpenAI (precios junio 2026, por 1M tokens in/out)
-OPENAI_MODEL=gpt-4o-mini       # $0.15/$0.60 - default, mejor calidad/precio
-OPENAI_MODEL=gpt-4.1-nano      # $0.10/$0.40 - el más barato, redacción más débil
-OPENAI_MODEL=gpt-4.1-mini      # $0.40/$1.60 - mejor calidad, ~2.6x el precio
+# Modelo predeterminado; parámetros y costos vigentes en CLAUDE.md → Componente 2
+OPENAI_MODEL=gpt-6-luna       # reasoning_effort="none" se envía explícitamente
+
+# Override compatible con el modelo anterior (sin parámetro reasoning_effort)
+# OPENAI_MODEL=gpt-4o-mini
 
 # Usar otro modelo de Ollama
 OLLAMA_MODEL=llama3.1:8b
@@ -221,10 +222,10 @@ llm.openai_breaker = CircuitBreaker(
 
 ### Logs detallados
 
-El sistema registra automáticamente:
+El sistema registra proveedor, modelo y latencia. Ejemplos de formato (latencias ilustrativas):
 
 ```
-INFO: LLM analysis generated using openai (gpt-4o-mini) in 12510ms (fallback: False)
+INFO: LLM analysis generated using openai (gpt-6-luna) in 12510ms (fallback: False)
 ```
 
 ```
@@ -242,7 +243,7 @@ watch -n 5 'curl -s http://localhost:8000/health/llm | jq'
 ### Métricas importantes
 
 1. **Latencia promedio**:
-   - OpenAI gpt-4o-mini: 3-15 segundos para un análisis de ~800 tokens
+   - OpenAI: medir `latency_ms` en los logs del modelo configurado; timeout de 30 segundos por request
    - Ollama: depende del hardware local
 
 2. **Tasa de fallback**:
@@ -268,7 +269,8 @@ curl https://api.openai.com/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o-mini",
+    "model": "gpt-6-luna",
+    "reasoning_effort": "none",
     "max_completion_tokens": 10,
     "messages": [{"role": "user", "content": "Hi"}]
   }'
@@ -320,14 +322,14 @@ ollama list | grep qwen
 
 ## 📈 Optimizaciones para Uso Personal
 
-### Costos de OpenAI (gpt-4o-mini)
+### Costos de OpenAI (GPT-6 Luna)
 
-Un análisis típico (~320 tokens de prompt + 800 de salida) cuesta **≈ $0.0005**, es decir ~$0.60 por cada 1,000 predicciones. Para un hobby es prácticamente gratis.
+Con 320 tokens de entrada + 800 de salida, sin caché ni razonamiento, la estimación es **$0.000432 por análisis** ($0.432 por cada 1,000). Tarifas, supuestos y compatibilidad actualizados en `CLAUDE.md` → "Componente 2".
 
-1. **Si quieres aún más barato** (calidad de redacción algo menor):
+1. **Usar Luna sin razonamiento** (default del proyecto):
 ```bash
 # En .env
-OPENAI_MODEL=gpt-4.1-nano
+OPENAI_MODEL=gpt-6-luna
 ```
 
 2. **Usar Ollama por defecto** (gratis, 100% local):
@@ -506,5 +508,5 @@ curl http://localhost:8000/health/llm | jq
 
 ---
 
-**Última actualización**: 2026-06-09 (migración Claude → OpenAI gpt-4o-mini)
+**Última actualización**: 2026-09-26 (migración a GPT-6 Luna con esfuerzo `none`)
 **Versión**: 2.0.0 (Uso Personal)

@@ -34,6 +34,19 @@ Reporte del owner: la UI muestra a Raul Rosas Jr. 12-1-0 cuando "en este momento
 
 ---
 
+# Plan: GPT-6 Luna sin razonamiento (2026-09-26)
+
+Pedido del owner: usar `gpt-6-luna` con `reasoning_effort="none"`.
+
+- [x] Capturar baseline local de salud, búsqueda y predicción sin LLM.
+- [x] Actualizar los defaults y `OPENAI_MODEL` local; enviar `reasoning_effort="none"` a Luna y conservar compatibilidad con overrides anteriores.
+- [x] Verificar tests, API recién cargada, paridad con baseline y frontend; probar OpenAI real si hay una clave activa.
+- [x] Sincronizar CLAUDE.md → AGENTS.md y referencias vigentes en los README.
+
+**Review: PASS local.** El owner reactivó la clave y autorizó un máximo de 3 intentos de análisis. Se usaron 2: uno bloqueado por la red del sandbox y uno real exitoso (HTTP 200, modelo devuelto `gpt-6-luna`, request con `reasoning_effort="none"`, 0 tokens de razonamiento, 321 de entrada + 421 de salida, `finish_reason=stop`, 5.66 s; costo estimado $0.0002426). Prueba sin reintentos del SDK ni del cliente. Evidencia: `/private/tmp/mma-luna-live/attempts.json`. Tests LLM: 18 passed; suite completa: 52 passed, 2 warnings (incluye cambios concurrentes de frescura, ajenos a esta migración). Paridad en API fresca: Rosas Jr. vs Barcelos pA=0.8106898665428162, mismas probabilidades, ganador y factores del baseline; UI/JS/CSS 200. La tarea concurrente reinició la API local en :8000 (PID 1704): el log confirma inicialización de Luna y startup completo, health sano con OpenAI disponible. Se invalidaron solo 4 entradas `prediction:*`, se retiró la entrada de prueba en DB15 y se apagó la API temporal :18000. Evidencia de stack: `/private/tmp/mma-luna-verification/` (`final-check.json`, `cleanup-result.json`). Un error del script verificador al leer `health.openai` se corrigió a `health.providers.openai`; los asserts pasaron usando las respuestas capturadas, sin repetir llamadas. CLAUDE/AGENTS y README sincronizados. Alcance local; no se realizó despliegue al homelab.
+
+---
+
 # Plan: Búsqueda/carga de peleadores — concurrencia + scraper + UI (2026-09-26)
 
 **Síntoma reportado (owner):** "no encuentro a los peleadores (probar con las peleas de hoy), y aunque aparezcan no cargan bien".
